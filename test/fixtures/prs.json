@@ -1,0 +1,282 @@
+[
+ {
+  "number": 373,
+  "title": "feat(api): 附件上传入口主实现 A——对象存储 + 默认配额、换配置不重启 (1.15.745–746)",
+  "body": "（虚构描述）存储后端写入口。",
+  "url": "https://github.com/acme/widget/pull/373",
+  "state": "OPEN",
+  "isDraft": false,
+  "baseRefName": "main",
+  "headRefName": "feat/upload-entry",
+  "createdAt": "2025-09-27T01:23:21Z",
+  "updatedAt": "2025-09-27T01:52:43Z",
+  "mergedAt": null,
+  "closedAt": null,
+  "mergeCommit": null,
+  "labels": {
+   "nodes": []
+  },
+  "timelineItems": {
+   "nodes": [
+    {
+     "createdAt": "2025-09-27T01:40:00Z"
+    }
+   ]
+  }
+ },
+ {
+  "number": 372,
+  "title": "[V2] docs+fix(collab): 任务 15.2 使用文档与 design 回写，频道权限收紧、在线状态补全、R2.9 按发送时刻判断 (collab 2.0.7)",
+  "body": "（虚构描述）M0-f 任务 15.2：chat-admin 使用文档 + design 回写。",
+  "url": "https://github.com/acme/widget/pull/372",
+  "state": "OPEN",
+  "isDraft": true,
+  "baseRefName": "v2/collab",
+  "headRefName": "feature/chat-15.2-docs",
+  "createdAt": "2025-09-27T00:21:26Z",
+  "updatedAt": "2025-09-27T00:30:00Z",
+  "mergedAt": null,
+  "closedAt": null,
+  "mergeCommit": null,
+  "labels": {
+   "nodes": [
+    {
+     "name": "collab-v2"
+    }
+   ]
+  },
+  "timelineItems": {
+   "nodes": []
+  }
+ },
+ {
+  "number": 371,
+  "title": "fix(api): 自定义通知渠道的令牌补上来源 (1.15.743–744)",
+  "body": "（虚构描述）自定义存储后端修复。",
+  "url": "https://github.com/acme/widget/pull/371",
+  "state": "MERGED",
+  "isDraft": false,
+  "baseRefName": "main",
+  "headRefName": "fix/notify-token-source",
+  "createdAt": "2025-09-26T15:17:13Z",
+  "updatedAt": "2025-09-27T00:29:53Z",
+  "mergedAt": "2025-09-27T00:29:41Z",
+  "closedAt": "2025-09-27T00:29:41Z",
+  "mergeCommit": {
+   "oid": "17995645b5e37d343f26f6ca0270a1037b3fe34f"
+  },
+  "labels": {
+   "nodes": []
+  },
+  "timelineItems": {
+   "nodes": [
+    {
+     "createdAt": "2025-09-26T23:57:32Z"
+    }
+   ]
+  }
+ },
+ {
+  "number": 369,
+  "title": "[V2] feat(collab): 界面打磨——新侧栏、消息菜单、撤回提示 (collab 2.0.6)",
+  "body": "（虚构描述）协作版 2.0.6 UI 改进轮，tasks 任务 18。",
+  "url": "https://github.com/acme/widget/pull/369",
+  "state": "MERGED",
+  "isDraft": false,
+  "baseRefName": "v2/collab",
+  "headRefName": "feature/chat-ui-refresh",
+  "createdAt": "2025-09-26T10:06:43Z",
+  "updatedAt": "2025-09-26T14:44:31Z",
+  "mergedAt": "2025-09-26T14:44:31Z",
+  "closedAt": "2025-09-26T14:44:31Z",
+  "mergeCommit": {
+   "oid": "bd8d7021d207f8def26757893618236d76e9c913"
+  },
+  "labels": {
+   "nodes": [
+    {
+     "name": "collab-v2"
+    }
+   ]
+  },
+  "timelineItems": {
+   "nodes": [
+    {
+     "createdAt": "2025-09-26T14:31:12Z"
+    }
+   ]
+  }
+ },
+ {
+  "number": 365,
+  "title": "[V2] feat(collab): M0-d 场景 B + 断线重连用例，修两处缺陷，web 对齐设计稿 (collab 2.0.5)",
+  "body": "（虚构描述）协作版 M0-d（spec collab-m0-space-run 任务 11–12）。",
+  "url": "https://github.com/acme/widget/pull/365",
+  "state": "MERGED",
+  "isDraft": false,
+  "baseRefName": "v2/collab",
+  "headRefName": "feature/m0d-reconnect",
+  "createdAt": "2025-09-25T13:01:26Z",
+  "updatedAt": "2025-09-26T06:35:43Z",
+  "mergedAt": "2025-09-26T06:35:43Z",
+  "closedAt": "2025-09-26T06:35:43Z",
+  "mergeCommit": {
+   "oid": "ba0ba930d7eae167e90197247e39724ecdf0d8b5"
+  },
+  "labels": {
+   "nodes": [
+    {
+     "name": "collab-v2"
+    }
+   ]
+  },
+  "timelineItems": {
+   "nodes": [
+    {
+     "createdAt": "2025-09-26T06:23:16Z"
+    }
+   ]
+  }
+ },
+ {
+  "number": 361,
+  "title": "refactor(plugins): 插件入口 init 改名 setup，为升级渲染引擎 9.4 做准备 (1.15.726)",
+  "body": "（虚构描述）入口改名。",
+  "url": "https://github.com/acme/widget/pull/361",
+  "state": "MERGED",
+  "isDraft": false,
+  "baseRefName": "main",
+  "headRefName": "feature/plugin-setup-rename",
+  "createdAt": "2025-09-25T04:05:04Z",
+  "updatedAt": "2025-09-25T04:44:08Z",
+  "mergedAt": "2025-09-25T04:43:58Z",
+  "closedAt": "2025-09-25T04:43:58Z",
+  "mergeCommit": {
+   "oid": "da704b03ff2f78c7791d12d63bfca277248b4d2c"
+  },
+  "labels": {
+   "nodes": []
+  },
+  "timelineItems": {
+   "nodes": [
+    {
+     "createdAt": "2025-09-25T04:23:38Z"
+    }
+   ]
+  }
+ },
+ {
+  "number": 360,
+  "title": "[V2] feat(collab): M0-c 推送服务 + 部署脚本 + 网页端 + 场景 A 在模拟环境通过 (collab 2.0.4)",
+  "body": "（虚构描述）做了什么（spec 任务 3–10）。",
+  "url": "https://github.com/acme/widget/pull/360",
+  "state": "MERGED",
+  "isDraft": false,
+  "baseRefName": "v2/collab",
+  "headRefName": "feature/m0c-push-service",
+  "createdAt": "2025-09-25T03:50:22Z",
+  "updatedAt": "2025-09-25T07:00:31Z",
+  "mergedAt": "2025-09-25T07:00:31Z",
+  "closedAt": "2025-09-25T07:00:31Z",
+  "mergeCommit": {
+   "oid": "3cada25d96a75bb71b7b8497a9c712ee73ba086d"
+  },
+  "labels": {
+   "nodes": [
+    {
+     "name": "collab-v2"
+    }
+   ]
+  },
+  "timelineItems": {
+   "nodes": [
+    {
+     "createdAt": "2025-09-25T06:48:49Z"
+    }
+   ]
+  }
+ },
+ {
+  "number": 352,
+  "title": "[V2] ci(collab): 新增 Chat Checks——V2 上跑云函数单测 (collab 2.0.3)",
+  "body": "（虚构描述）关闭未合并。",
+  "url": "https://github.com/acme/widget/pull/352",
+  "state": "CLOSED",
+  "isDraft": false,
+  "baseRefName": "v2/collab",
+  "headRefName": "ci/v2-chat-checks",
+  "createdAt": "2025-09-24T08:51:53Z",
+  "updatedAt": "2025-09-24T23:34:13Z",
+  "mergedAt": null,
+  "closedAt": "2025-09-24T23:34:13Z",
+  "mergeCommit": null,
+  "labels": {
+   "nodes": [
+    {
+     "name": "collab-v2"
+    }
+   ]
+  },
+  "timelineItems": {
+   "nodes": []
+  }
+ },
+ {
+  "number": 346,
+  "title": "fix(api): config.json 读后写回改为严格解析 + 原子写 (1.15.709) — ADR-0042 §8.3 前置 D 补齐",
+  "body": "（虚构描述）严格读 + 原子写。",
+  "url": "https://github.com/acme/widget/pull/346",
+  "state": "MERGED",
+  "isDraft": false,
+  "baseRefName": "main",
+  "headRefName": "fix/config-json-strict-write",
+  "createdAt": "2025-09-24T07:10:23Z",
+  "updatedAt": "2025-09-24T08:23:23Z",
+  "mergedAt": "2025-09-24T08:18:41Z",
+  "closedAt": "2025-09-24T08:18:41Z",
+  "mergeCommit": {
+   "oid": "dc97057fd72c8facf157af6495f22e624944a3b3"
+  },
+  "labels": {
+   "nodes": []
+  },
+  "timelineItems": {
+   "nodes": [
+    {
+     "createdAt": "2025-09-24T07:47:59Z"
+    }
+   ]
+  }
+ },
+ {
+  "number": 344,
+  "title": "[V2] feat(collab): 群聊 M0 存储层（M0-b）— 迁移 001–010 + 推送 RPC + T1 测试 (1.15.706)",
+  "body": "（虚构描述）协作版 M0 消息库。",
+  "url": "https://github.com/acme/widget/pull/344",
+  "state": "MERGED",
+  "isDraft": false,
+  "baseRefName": "v2/collab",
+  "headRefName": "feature/m0-storage",
+  "createdAt": "2025-09-24T06:25:37Z",
+  "updatedAt": "2025-09-24T08:01:40Z",
+  "mergedAt": "2025-09-24T07:41:30Z",
+  "closedAt": "2025-09-24T07:41:30Z",
+  "mergeCommit": {
+   "oid": "c4bf69cbc43a33f9019da3281ea7c603f8cb4463"
+  },
+  "labels": {
+   "nodes": [
+    {
+     "name": "collab-v2"
+    }
+   ]
+  },
+  "timelineItems": {
+   "nodes": [
+    {
+     "createdAt": "2025-09-24T07:24:07Z"
+    }
+   ]
+  }
+ }
+]

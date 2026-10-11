@@ -1,0 +1,22 @@
+{
+  "server": { "host": "127.0.0.1", "port": 4317 },
+  "defaults": { "hoursPerDay": 8, "defaultDurationDays": 1, "sessionRunningMinutes": 10, "sessionStaleDays": 3,
+                "githubRefreshMinutes": 5, "recentClosedPrDays": 14, "recentChangesDays": 7 },
+  "projects": [{
+    "id": "my-app", "name": "My App",
+    "repo": { "path": "~/Projects/my-app", "github": "acme/my-app" },
+    "docSources": [
+      { "type": "spec-dir", "label": "Claude Code spec", "path": ".claude/specs" },
+      { "type": "adr-dir", "label": "ADR", "path": "docs/adr" },
+      { "type": "task-list", "label": "Task list", "files": [] }
+    ],
+    "archived": [], "excluded": [],
+    "branchLines": [
+      { "id": "main", "name": "Main", "base": "main", "docFilter": "^(?!v2-)" },
+      { "id": "v2", "name": "v2", "base": "release/v2",
+        "titlePrefix": "[V2]", "labels": ["v2"], "docFilter": "^v2-" }
+    ],
+    "github": {},
+    "sessions": [{ "source": "claude-code" }, { "source": "codex" }]
+  }]
+}

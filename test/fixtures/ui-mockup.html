@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>devboard 看板 UI 稿</title>
+<style>
+/* UI 稿：静态 mock，不接后端。颜色全部走变量，亮/暗主题各一套。 */
+:root{
+  --bg:#f6f7f9; --panel:#fff; --panel2:#f1f3f6; --line:#e3e6eb; --text:#1d2330; --muted:#6b7385; --accent:#3b6ef5;
+  --s-todo:#9aa3b2; --s-doing:#e8a33d; --s-review:#8b5cf6; --s-merge:#0ea5b7; --s-done:#22a06b;
+  --warn:#d9822b; --danger:#d64545; --today:#e5484d;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#11141a; --panel:#181c24; --panel2:#1f2430; --line:#2a303c; --text:#e6e9ef; --muted:#8f97a8; --accent:#6b93ff;
+    --s-todo:#6b7385; --s-doing:#f0b458; --s-review:#a78bfa; --s-merge:#22c3d6; --s-done:#3fbf85;
+    --shadow:none;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11141a; --panel:#181c24; --panel2:#1f2430; --line:#2a303c; --text:#e6e9ef; --muted:#8f97a8; --accent:#6b93ff;
+  --s-todo:#6b7385; --s-doing:#f0b458; --s-review:#a78bfa; --s-merge:#22c3d6; --s-done:#3fbf85; --shadow:none;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+button{font:inherit;color:inherit}
+.mockbar{background:#fff4d6;color:#7a5200;padding:6px 16px;font-size:12px;border-bottom:1px solid #f0d48a}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .mockbar{background:#3a2e10;color:#f3d48a;border-color:#5a4718}}
+:root[data-theme="dark"] .mockbar{background:#3a2e10;color:#f3d48a;border-color:#5a4718}
+
+/* 顶栏 */
+header{background:var(--panel);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.brand{font-weight:700;font-size:15px}
+.brand small{font-weight:400;color:var(--muted);margin-left:6px}
+select,.seg button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+.seg{display:inline-flex}
+.seg button{border-radius:0;margin-left:-1px;cursor:pointer}
+.seg button:first-child{border-radius:6px 0 0 6px;margin-left:0}
+.seg button:last-child{border-radius:0 6px 6px 0}
+.seg button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.meta{color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+.meta b{color:var(--text);font-weight:500}
+.spacer{flex:1}
+.btn{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+
+nav{display:flex;gap:2px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto}
+nav button{background:none;border:0;border-bottom:2px solid transparent;padding:10px 12px;cursor:pointer;color:var(--muted);white-space:nowrap}
+nav button.on{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
+.count{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--panel2);font-size:11px;margin-left:4px;text-align:center}
+.count.warn{background:var(--warn);color:#fff}
+
+main{padding:16px;max-width:1400px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+h2{font-size:14px;margin:0 0 10px}
+h3{font-size:13px;margin:0}
+.muted{color:var(--muted)}
+
+/* 数字卡 */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.stat{padding:12px 14px;cursor:pointer}
+.stat .n{font-size:24px;font-weight:700;line-height:1.2}
+.stat .l{color:var(--muted);font-size:12px}
+.stat .sub{font-size:11px;color:var(--muted)}
+.stat.big .n{font-size:28px}
+.pbar{height:6px;border-radius:3px;background:var(--panel2);overflow:hidden;display:flex;margin-top:6px}
+.pbar i{display:block;height:100%}
+
+.two>*{min-width:0}
+.two{display:grid;grid-template-columns:1fr 340px;gap:14px}
+@media (max-width:980px){.two{grid-template-columns:1fr}}
+
+/* 状态徽标：图标 + 文字 + 颜色 三重编码 */
+.st{display:inline-flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap}
+.st .ic{font-size:13px}
+.st.todo{color:var(--s-todo)} .st.doing{color:var(--s-doing)} .st.review{color:var(--s-review)} .st.merge{color:var(--s-merge)} .st.done{color:var(--s-done)}
+
+/* 任务树 */
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+.toolbar input[type=search]{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 8px;min-width:180px;color:var(--text)}
+.toolbar label{display:inline-flex;gap:4px;align-items:center;color:var(--muted);cursor:pointer}
+.doc{border-bottom:1px solid var(--line)}
+.doc:last-child{border-bottom:0}
+.grp{display:flex;align-items:center;gap:10px;padding:8px 14px;user-select:text;-webkit-user-select:text}
+.grp:hover{background:var(--panel2)}
+.grp .caret{width:12px;flex-shrink:0;color:var(--muted);transition:transform .15s}
+.grp button.caret,.row .tcaret{background:none;border:0;padding:4px;min-width:28px;min-height:28px;cursor:pointer}
+.grp.closed .caret{transform:rotate(-90deg)}
+.grp .gname{font-weight:600}
+.grp .gp{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+.grp .gp .pbar{width:120px;margin:0}
+.grp.lv1{background:var(--panel2);font-size:13px}
+.grp.lv2{padding-left:30px}
+.rows.hide{display:none}
+/* 任务行（N23）：状态图标在行首、状态文字在行尾标签前；徽标仍是一个 .st（DOM 与读屏顺序不变），靠 display:contents 把图标和文字分到两列 */
+.row{display:grid;grid-template-columns:16px 52px minmax(0,1fr) auto auto auto;gap:8px;align-items:center;padding:6px 14px 6px 46px;border-top:1px solid var(--line);user-select:text;-webkit-user-select:text}
+.row>*{grid-row:1}
+.row .st-cell,.row .st-cell .st{display:contents}
+.row .st .ic{grid-column:1;grid-row:1;font-size:13px;text-align:center}
+.row .st .tx{grid-column:4;grid-row:1;font-size:11px;white-space:nowrap}
+.row .id{grid-column:2} .row .title{grid-column:3} .row .tags{grid-column:5} .row .task-detail{grid-column:6}
+.row:hover{background:var(--panel2)}
+.row.child{padding-left:70px}
+.row.child .id::before{content:"└";margin-right:4px;color:var(--muted);opacity:.6}
+.row .id{font-family:ui-monospace,Menlo,monospace;color:var(--muted);font-size:12px;white-space:nowrap}
+/* 展开的分组 = 卡片：标题行垫底色，任务挂在卡片里，子任务再缩一级、底色略深；折叠的分组仍是普通一行。
+   折叠时也占同样的盒子（透明边框、同样的外边距与内边距），展开只是把卡片显出来，标题与进度条不跳位 */
+.gblock{margin:2px 14px 2px 28px;border:1px solid transparent;border-radius:8px;overflow:hidden}
+.gblock>.grp.lv2{padding-left:10px}
+.gblock.open{margin-bottom:12px;border-color:var(--line);background:var(--panel)}
+.gblock.open>.grp.lv2{background:var(--panel2)}
+.gblock.open .row{padding-left:36px}
+.gblock.open .row.child{padding-left:60px;background:color-mix(in srgb,var(--panel2) 45%,transparent)}
+.gblock.open .row:hover{background:var(--panel2)}
+.row .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .title .dep{color:var(--muted);font-size:11px;margin-left:8px}
+.row .tcaret{display:inline-block;width:14px;color:var(--muted);cursor:pointer}
+.row .tcaret:hover{color:var(--text)}
+.linkbtn{background:none;border:0;padding:0;color:var(--accent);cursor:pointer;font-size:inherit}
+.tags{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.pr{font-size:11px;border-radius:10px;padding:1px 8px;border:1px solid;white-space:nowrap;text-decoration:none}
+.pr.draft{color:var(--s-review);border-color:var(--s-review)}
+.pr.ready{color:var(--s-merge);border-color:var(--s-merge)}
+.pr.merged{color:#fff;background:var(--s-done);border-color:var(--s-done)}
+.pr.unsynced{color:var(--s-done);border-color:var(--s-done);border-style:dashed}
+.pr.closed{color:var(--muted);border-color:var(--line);text-decoration:line-through}
+.ai{font-size:11px;border-radius:10px;padding:1px 8px;background:var(--panel2);display:inline-flex;gap:5px;align-items:center;white-space:nowrap}
+.ai .dot{width:7px;height:7px;border-radius:50%;background:var(--s-doing)}
+.ai.running .dot{animation:pulse 1.4s infinite}
+.ai.stalled{color:var(--warn)} .ai.stalled .dot{background:var(--warn)}
+.ai.recent .dot{background:var(--muted)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(232,163,61,.6)}70%{box-shadow:0 0 0 6px rgba(232,163,61,0)}100%{box-shadow:0 0 0 0 rgba(232,163,61,0)}}
+.flag{font-size:11px;color:var(--warn)}
+.flag.info{color:var(--muted)}
+.blk{font-size:11px;color:var(--danger);border:1px solid var(--danger);border-radius:10px;padding:0 6px}
+
+/* 右栏 */
+.side .sec{padding:12px 14px;border-bottom:1px solid var(--line)}
+.side .sec:last-child{border-bottom:0}
+.ev{display:grid;grid-template-columns:44px 1fr;gap:6px;padding:4px 0;font-size:12px}
+.ev .t{color:var(--muted)}
+.unl{display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px dashed var(--line);font-size:12px}
+.unl:first-of-type{border-top:0}
+.unl .tt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 甘特 */
+.gantt{display:grid;grid-template-columns:340px 1fr;overflow:hidden}
+.glabels{border-right:1px solid var(--line)}
+.gscroll{overflow-x:auto;position:relative}
+.gtrack{position:relative}
+.gh{height:44px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:2}
+.glabels .gh{display:flex;align-items:flex-end;padding:0 10px 6px;color:var(--muted);font-size:12px}
+.gl{height:26px;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;cursor:pointer}
+.gl.g1{background:var(--panel2);font-weight:600}
+.gl.g2{padding-left:24px;font-weight:600}
+.gl.t{padding-left:38px}
+.gl .id{font-family:ui-monospace,Menlo,monospace;color:var(--muted);font-size:11px;min-width:30px}
+.gl .tt{overflow:hidden;text-overflow:ellipsis}
+.gr{height:26px;border-bottom:1px solid var(--line);position:relative}
+.gr.g1{background:var(--panel2)}
+.gr.dim,.gl.dim{opacity:.35}
+.gr.hl,.gl.hl{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.day{position:absolute;top:0;bottom:0;border-left:1px solid var(--line);opacity:.5}
+.day.wk{opacity:1}
+.dlab{position:absolute;bottom:4px;font-size:10px;color:var(--muted);transform:translateX(3px)}
+.mlab{position:absolute;top:4px;font-size:11px;font-weight:600;transform:translateX(3px)}
+.today{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--today);z-index:3;pointer-events:none}
+.today span{position:absolute;top:2px;left:3px;white-space:nowrap;background:var(--today);color:#fff;font-size:10px;padding:0 4px;border-radius:3px}
+.bar{position:absolute;top:6px;height:14px;border-radius:3px;cursor:pointer}
+.bar.est{background:repeating-linear-gradient(45deg,color-mix(in srgb,currentColor 35%,transparent) 0 4px,transparent 4px 8px);border:1px dashed currentColor;background-color:color-mix(in srgb,currentColor 10%,transparent)}
+.bar.sum{top:10px;height:6px;border-radius:0;background:var(--muted);opacity:.7}
+.bar.sum::before,.bar.sum::after{content:"";position:absolute;top:0;width:3px;height:10px;background:inherit}
+.bar.sum::before{left:0} .bar.sum::after{right:0}
+.blabel{position:absolute;top:5px;font-size:10px;color:var(--muted);white-space:nowrap;pointer-events:none}
+.legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px}
+.sw{display:inline-block;width:18px;height:10px;border-radius:2px;vertical-align:middle;margin-right:4px}
+.note{font-size:11px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--line)}
+svg.links{position:absolute;left:0;top:0;pointer-events:none;z-index:2;overflow:visible}
+
+
+/* 关系图 */
+.gwrap{overflow:auto;max-height:calc(100vh - 260px);background:var(--panel)}
+.gnode rect{fill:var(--panel);stroke:var(--line);stroke-width:1.2}
+.gnode{cursor:pointer}
+.gnode .bar{stroke:none}
+.gnode text{font-size:11px;fill:var(--text)}
+.gnode text.gid{font-family:ui-monospace,Menlo,monospace;fill:var(--muted);font-size:10px}
+.gnode.done{opacity:.55}
+.gnode.blocked rect.box{stroke:var(--danger);stroke-dasharray:4 3}
+.gnode.cyc rect.box{stroke:var(--danger);stroke-width:2}
+.gnode.sel rect.box{stroke:var(--accent);stroke-width:2.2}
+.gnode.pre rect.box{stroke:var(--accent)}
+.gnode.post rect.box{stroke:var(--muted);stroke-width:2}
+.gnode.parhl rect.box{stroke:var(--s-done);stroke-width:2}
+.gnode.fade,.gedge.fade{opacity:.15}
+.gedge{fill:none;stroke:var(--muted);stroke-width:1.2}
+.gedge.par{stroke-dasharray:4 4;stroke:var(--s-done)}
+.gedge.on{stroke:var(--accent);stroke-width:2}
+.laycol{font-size:10px;fill:var(--muted)}
+
+/* 下一步 */
+.cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media (max-width:1100px){.cols{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:620px){.cols{grid-template-columns:1fr}}
+.col{padding:12px}
+.col h2{display:flex;align-items:center;gap:6px}
+.col .hint{font-size:11px;color:var(--muted);margin:-6px 0 10px}
+.batch{border:1px dashed var(--s-done);border-radius:8px;padding:6px;margin-bottom:10px}
+.batch .bl{font-size:11px;color:var(--s-done);margin:0 0 4px 2px}
+.tk{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px;cursor:pointer}
+.tk:hover{border-color:var(--accent)}
+.tk .top{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted)}
+.tk .tt{margin:2px 0 4px}
+.tk .why{font-size:11px;color:var(--muted)}
+.tk .why.red{color:var(--danger)}
+
+/* 抽屉 */
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(520px,100%);background:var(--panel);border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(0,0,0,.12);transform:translateX(100%);transition:transform .2s;z-index:20;overflow-y:auto}
+.drawer.open{transform:none}
+.drawer .hd{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:flex-start;position:sticky;top:0;background:var(--panel)}
+.drawer .hd h2{margin:0;flex:1}
+.drawer .bd{padding:6px 16px 20px}
+.kv{display:grid;grid-template-columns:88px 1fr;gap:6px 10px;margin:10px 0;font-size:12px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0}
+.box{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0;font-size:12px}
+.box .src{color:var(--muted);font-size:11px}
+code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:var(--panel2);padding:0 4px;border-radius:3px}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.2);opacity:0;pointer-events:none;transition:opacity .2s;z-index:19}
+.scrim.open{opacity:1;pointer-events:auto}
+.hidden{display:none}
+
+@media (max-width:620px){
+  .row,.gblock.open .row{grid-template-columns:16px auto minmax(0,1fr) auto;padding-left:16px}
+  .row.child,.gblock.open .row.child{padding-left:32px}
+  .row .st .tx{display:none}
+  .row .task-detail{grid-column:4}
+  .row .tags{grid-column:1/-1;grid-row:2;justify-content:flex-start}
+  .gblock{margin-left:14px}
+  .gantt{grid-template-columns:160px 1fr}
+}
+</style>
+</head>
+<body>
+<div class="mockbar">UI 稿（静态 mock）。collab-m0-space-run 与 devboard-mvp 都是<b>虚构示例</b>，用来演示各种状态。"今天"固定为 2026-09-26。</div>
+
+<header>
+  <div class="brand">devboard<small>AI 开发进度看板</small></div>
+  <select aria-label="项目"><option>Acme</option><option disabled>（以后：其它项目）</option></select>
+  <div class="seg" id="lineSeg" role="group" aria-label="分支线">
+    <button class="on" data-line="all">全部</button><button data-line="v2">V2 协作版</button><button data-line="main">main 个人版</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="meta">
+    <span>工作区 <b>acme-chat</b> · release/v2 @ <b>3e7a9c1d</b></span>
+    <span>文档 3 秒前</span><span>AI 会话 5 秒前</span><span>GitHub 1 分钟前</span>
+  </div>
+  <button class="btn" title="立即重读文档、会话与 GitHub">↻ 刷新</button>
+  <button class="btn" id="themeBtn" title="切换亮/暗">◐</button>
+</header>
+
+<nav id="nav">
+  <button data-v="overview" class="on">总览</button>
+  <button data-v="gantt">甘特图</button>
+  <button data-v="graph">关系图</button>
+  <button data-v="next">下一步</button>
+  <button data-v="check">需要确认<span class="count warn">3</span></button>
+  <button data-v="diag">诊断</button>
+</nav>
+
+<main>
+  <section id="v-overview"></section>
+  <section id="v-gantt" class="hidden"></section>
+  <section id="v-graph" class="hidden"></section>
+  <section id="v-next" class="hidden"></section>
+  <section id="v-check" class="hidden"></section>
+  <section id="v-diag" class="hidden"></section>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="任务详情"></aside>
+
+<script>
+/* ============ mock 数据 ============
+   status: todo 未开始 / doing 进行中 / review 已发 PR 等待 review / merge review 完成等待合并 / done 已合并完成
+   pr.st: draft / ready / merged（已同步到本地）/ unsynced（GitHub 已合并、本地还没 pull）/ closed
+   ai: running 运行中（10 分钟内有新记录）/ recent 最近活跃 / stalled 停滞（3 天无记录）
+   日期：d('09-24') = 2026-09-24 */
+const TODAY = new Date('2026-09-26T10:00:00');
+const d = s => new Date('2026-' + s + 'T09:00:00');
+const S = {todo:['○','未开始'],doing:['◔','进行中'],review:['◑','等待 review'],merge:['◕','等待合并'],done:['●','已合并完成']};
+const PRS = {
+  344:{t:'[V2] feat(chat): M0-b 消息库 migration + 函数 + 行级权限 + T1',line:'v2',st:'merged',c:'09-23',m:'09-23'},
+  360:{t:'[V2] feat(chat): M0-c 两个插件 + 部署物 + web 客户端 + 场景 A 在 mock 上过',line:'v2',st:'merged',c:'09-24',m:'09-24'},
+  365:{t:'[V2] feat(chat): M0-d 场景 B + 韧性用例，修两处缺陷',line:'v2',st:'merged',c:'09-24',m:'09-25'},
+  369:{t:'[V2] feat(chat): UI 改进轮——外壳、消息操作、停止回复',line:'v2',st:'merged',c:'09-25',m:'09-25'},
+  372:{t:'[V2] docs(chat): 任务 15.2 chat-admin 使用文档 + spike 结论回写',line:'v2',st:'draft',c:'09-25'},
+  371:{t:'fix(gateway): 自定义 provider 的 key 补上来源',line:'main',st:'ready',c:'09-25'},
+  380:{t:'feat(devboard): 任务 1 项目骨架与配置',line:'v2',st:'merged',c:'09-15',m:'09-16'},
+  381:{t:'feat(devboard): 任务 2.1 tasks.md 解析',line:'v2',st:'unsynced',c:'09-17',m:'09-25'},
+  383:{t:'feat(devboard): 任务 2.2 ADR 解析',line:'v2',st:'ready',c:'09-19'},
+  384:{t:'feat(devboard): 任务 2.3 Mermaid 依赖图',line:'v2',st:'draft',c:'09-22'},
+  385:{t:'feat(devboard): 任务 4 GitHub 读取',line:'v2',st:'merged',c:'09-17',m:'09-19'},
+};
+const prLabel = n => {const p=PRS[n];return {draft:'draft·等 review',ready:'ready·等合并',merged:'已合并',unsynced:'已合并·待同步本地',closed:'已关闭'}[p.st];};
+
+/* 任务：g=分组(里程碑) ; lv 2 = 子任务 */
+const DOCS = [
+ {id:'collab-m0-space-run', title:'collab-m0-space-run（v2 M0）', path:'.claude/specs/collab-m0-space-run/tasks.md', groups:[
+  {id:'M0-a',t:'M0-a spike 全过', tasks:[
+   ['1.1','S1 推送服务经连接池直连消息库','done',{s:'09-19',e:'09-23',doconly:1}],
+   ['1.2','S2 外部插件能力面 + 容器 HTTPS 出站','done',{s:'09-21',e:'09-23',doconly:1}],
+   ['1.3','分叉点：数据访问层决策','done',{s:'09-23',e:'09-23',doconly:1,dep:['1.1']}],
+   ['1.4','S3 dispatch 返回时机与 callId','done',{s:'09-22',e:'09-23',doconly:1}],
+   ['1.5','S4 回环 /tools/invoke 触发钩子','done',{s:'09-22',e:'09-23',doconly:1}],
+   ['1.6','S5 原版镜像重跑路由两条','done',{s:'09-23',e:'09-23',doconly:1}],
+   ['1.7','S8 Realtime 按行级权限过滤','done',{s:'09-23',e:'09-23',doconly:1}],
+   ['1.8','S6 空闲零模型调用','done',{s:'09-23',e:'09-23',doconly:1}],
+   ['1.9','S7 真实模型被拦后的表现','done',{s:'09-23',e:'09-23',doconly:1}],
+  ]},
+  {id:'M0-b',t:'M0-b 消息库可测', tasks:[
+   ['2.1','迁移 001 表与索引 + T1 骨架','done',{s:'09-23',e:'09-23',pr:[344]}],
+   ['2.2','迁移 002 状态机与审计','done',{s:'09-23',e:'09-23',pr:[344],dep:['2.1']}],
+   ['2.3','迁移 003 RLS + Realtime','done',{s:'09-23',e:'09-23',pr:[344],dep:['2.2']}],
+   ['2.4','迁移 004 用户函数','done',{s:'09-23',e:'09-23',pr:[344],dep:['2.3']}],
+   ['2.5','迁移 005 实例密钥体系','done',{s:'09-23',e:'09-23',pr:[344],dep:['1.3']}],
+   ['2.5b','Edge Function bot-rpc','done',{s:'09-23',e:'09-23',pr:[344],dep:['2.5','2.6','2.8']}],
+   ['2.6','迁移 006 通道引擎函数','done',{s:'09-23',e:'09-23',pr:[344],dep:['2.5']}],
+   ['2.7','迁移 007 授权判定','done',{s:'09-23',e:'09-23',pr:[344],dep:['2.6']}],
+   ['2.8','迁移 008 续做函数','done',{s:'09-23',e:'09-23',pr:[344],dep:['2.7']}],
+   ['2.9','迁移 009 后台函数','done',{s:'09-23',e:'09-23',pr:[344]}],
+   ['2.10','迁移 010 清扫 + 指标','done',{s:'09-23',e:'09-23',pr:[344]}],
+  ]},
+  {id:'M0-c',t:'M0-c 两个插件 + 部署物 + web + 场景 A', tasks:[
+   ['3','chat-bot 骨架 + 数据访问层','done',{s:'09-24',e:'09-24',pr:[360],dep:['1.3']}],
+   ['4','授权审批插件','done',{s:'09-24',e:'09-24',pr:[360],dep:['3','2.7','2.8'],par:['5']}],
+   ['5','通道插件','done',{s:'09-24',e:'09-24',pr:[360],dep:['3','2.6'],par:['4']}],
+   ['6','部署物','done',{s:'09-24',e:'09-24',pr:[360],dep:['3','4','5'],par:['7']}],
+   ['7','运维 CLI chat-admin','done',{s:'09-24',e:'09-24',pr:[360],dep:['2.9','2.5'],par:['6']}],
+   ['8','web 客户端','done',{s:'09-24',e:'09-24',pr:[360],dep:['2.3','2.4']}],
+   ['9','T3 集成骨架 + mock 模型','done',{s:'09-24',e:'09-24',pr:[360],dep:['4','5','6']}],
+   ['10','场景 A 集成测试','done',{s:'09-24',e:'09-24',pr:[360],dep:['9','7']}],
+  ]},
+  {id:'M0-d',t:'M0-d 场景 B + 韧性用例', tasks:[
+   ['11','场景 B 集成测试','done',{s:'09-24',e:'09-25',pr:[365],dep:['9','10']}],
+   ['12','韧性集成用例','done',{s:'09-24',e:'09-25',pr:[365],dep:['9','2.10','7'],par:['11']}],
+  ]},
+  {id:'UI',t:'2.0.6 UI 改进轮', tasks:[
+   ['18','UI 改进轮（18.1–18.6）','done',{doconly:1,notime:1,dep:['8','5']}],
+  ]},
+  {id:'M0-e',t:'M0-e 真实模型验收 + 共存回归', tasks:[
+   ['13','T5 真实模型验收','todo',{block:['P1 sandbox 访问','P5 Auth 白名单']}],
+   ['14','与个人版共存回归','todo',{block:['P1 sandbox 访问']}],
+  ]},
+  {id:'M0-f',t:'M0-f 文档与发版', tasks:[
+   ['15.1','部署与验收说明 README','todo',{dep:['13','14'],unsch:'前置 13、14 无法排期'}],
+   ['15.2','chat-admin 使用文档 + spike 回写','review',{s:'09-25',est:['09-26','09-27'],pr:[372],flag:'文档已勾选，但 PR 还是 draft'}],
+   ['16','规格↔实现对照审计','todo',{dep:['15.1','15.2'],unsch:'前置 15.1 无法排期'}],
+   ['17','版本落档与发版','todo',{dep:['16'],unsch:'前置 16 无法排期'}],
+  ]},
+ ]},
+ {id:'devboard-mvp', title:'devboard-mvp（示例数据）', path:'devboard/.claude/specs/devboard-mvp/tasks.md', groups:[
+  {id:'D1',t:'阶段 1 地基', tasks:[
+   ['1','项目骨架与配置','done',{s:'09-15',e:'09-16',pr:[380]}],
+   ['4','GitHub 读取（gh api graphql）','done',{s:'09-16',e:'09-19',pr:[385],dep:['1'],par:['2.1']}],
+  ]},
+  {id:'D2',t:'阶段 2 解析', tasks:[
+   ['2.1','tasks.md 解析','merge',{s:'09-16',e:'09-25',pr:[381],dep:['1'],unsynced:1}],
+   ['2.2','ADR 解析','merge',{s:'09-18',est:['09-26','09-26'],pr:[383],dep:['2.1'],par:['2.3']}],
+   ['2.3','Mermaid 依赖图','review',{s:'09-20',est:['09-26','09-27'],pr:[384],dep:['2.1'],par:['2.2']}],
+  ]},
+  {id:'D3',t:'阶段 3 AI 会话', tasks:[
+   ['3.1','Claude Code 会话来源','doing',{s:'09-24',est:['09-26','09-28'],ai:'running',dep:['1'],par:['3.2']}],
+   ['3.2','焦点段识别','doing',{s:'09-19',est:['09-26','09-26'],ai:'stalled',dep:['1'],par:['3.1'],over:1}],
+  ]},
+  {id:'D4',t:'阶段 4 推算与视图', tasks:[
+   ['5.1','任务↔PR 关联','todo',{est:['09-26','09-28'],dep:['2.1','4'],par:['5.3']}],
+   ['5.3','冲突清单','todo',{est:['09-26','09-27'],dep:['2.1'],par:['5.1']}],
+   ['5.2','状态推算','todo',{est:['09-28','09-30'],dep:['5.1','3.1','3.2']}],
+   ['6','甘特图','todo',{est:['09-30','10-03'],dep:['5.2','2.3']}],
+   ['7','总览 + 下一步视图','todo',{est:['09-30','10-02'],dep:['5.2'],par:['6']}],
+   ['8','最低约定文档 CONVENTION.md','todo',{est:['09-26','09-26'],dep:['1'],par:['9']}],
+   ['9','诊断视图','todo',{est:['09-26','09-27'],dep:['4'],par:['8']}],
+  ]},
+ ]},
+];
+const AIS = {
+  '3.1':{st:'running',title:'devboard：Claude Code 会话来源适配',start:'09-24 14:02',last:'2 分钟前',msg:'已按字节偏移增量读 jsonl，下一步补截短重写的处理…'},
+  '3.2':{st:'stalled',title:'devboard：焦点段识别',start:'09-19 10:11',last:'09-22 18:40（4 天前）',msg:'焦点段规则写到一半：子 agent 派活的识别还没做'},
+};
+const UNLINKED = [369, 371];
+
+/* 扁平化 + 按键索引 */
+const ALL=[]; const BYKEY={};
+DOCS.forEach(doc=>doc.groups.forEach(g=>g.tasks.forEach(([id,title,st,o])=>{
+  const t={doc:doc.id,docTitle:doc.title,path:doc.path,g:g.id,gt:g.t,id,title,st,...o,key:doc.id+'#'+id};
+  ALL.push(t);BYKEY[t.key]=t;})));
+const tk=(doc,id)=>BYKEY[doc+'#'+id];
+
+/* ============ 通用小件 ============ */
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const stBadge=st=>`<span class="st ${st}"><span class="ic">${S[st][0]}</span><span class="tx">${S[st][1]}</span></span>`;
+const prTag=n=>{const p=PRS[n];return `<a class="pr ${p.st}" href="#" onclick="event.stopPropagation();return false" title="${esc(p.t)}">#${n} ${prLabel(n)}</a>`;};
+const aiTag=t=>{const a=AIS[t.id]&&t.ai?AIS[t.id]:null;if(!a)return'';
+  const lab={running:'Claude 运行中',recent:'Claude 最近活跃',stalled:'Claude 停滞 4 天'}[a.st];
+  return `<span class="ai ${a.st}"><span class="dot"></span>${lab}</span>`;};
+const tagsOf=t=>{
+  let h='';
+  if(t.block) h+=t.block.map(b=>`<span class="blk" title="外部前置未满足">⛔ ${esc(b.split(' ')[0])}</span>`).join('');
+  h+=aiTag(t);
+  (t.pr||[]).forEach(n=>h+=prTag(n));
+  if(t.doconly) h+='<span class="flag info" title="文档里已勾选，但没有找到对应 PR">仅文档确认</span>';
+  if(t.flag) h+=`<span class="flag" title="${esc(t.flag)}">⚠ 不一致</span>`;
+  if(t.over) h+='<span class="flag">⚠ 超出预计</span>';
+  return h;};
+const pct=(a,b)=>b?Math.round(a/b*100):0;
+const stackBar=list=>{const n=list.length;const c=k=>list.filter(t=>t.st===k).length;
+  return `<div class="pbar">${['done','merge','review','doing'].map(k=>`<i style="width:${c(k)/n*100}%;background:var(--s-${k})"></i>`).join('')}</div>`;};
+
+/* ============ 总览 ============ */
+function renderOverview(){
+  const n=ALL.length, done=ALL.filter(t=>t.st==='done').length;
+  const c=k=>ALL.filter(t=>t.st===k).length;
+  const ready=ALL.filter(isReady).length;
+  const unsynced=ALL.filter(t=>t.unsynced).length;
+  const el=document.getElementById('v-overview');
+  el.innerHTML=`
+  <div class="stats">
+    <div class="card stat big" onclick="go('gantt')"><div class="l">整体进度</div><div class="n">${pct(done,n)}%</div><div class="sub">${done} / ${n} 个任务已合并完成</div>${stackBar(ALL)}</div>
+    <div class="card stat" onclick="go('next')"><div class="l">可开工</div><div class="n" style="color:var(--s-done)">${ready}</div><div class="sub">依赖都满足了</div></div>
+    <div class="card stat"><div class="l">${S.doing[0]} 进行中</div><div class="n" style="color:var(--s-doing)">${c('doing')}</div><div class="sub">1 运行中 · 1 停滞</div></div>
+    <div class="card stat"><div class="l">${S.review[0]} 等待 review</div><div class="n" style="color:var(--s-review)">${c('review')}</div><div class="sub">draft PR</div></div>
+    <div class="card stat"><div class="l">${S.merge[0]} 等待合并</div><div class="n" style="color:var(--s-merge)">${c('merge')}</div><div class="sub">ready PR · 含 ${unsynced} 个已合并待同步</div></div>
+    <div class="card stat" onclick="go('next')"><div class="l">已合并·待同步到本地</div><div class="n" style="color:var(--warn)">${unsynced}</div><div class="sub">GitHub 已合并，本地没 pull</div></div>
+  </div>
+  <div class="two">
+    <div class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">任务</h2>
+        <input type="search" placeholder="搜索编号 / 标题 / PR 号">
+        <label><input type="checkbox" id="onlyOpen" checked> 只看未完成的分组</label>
+        <span class="spacer"></span>
+        <span class="muted" style="font-size:12px">行 = 文档里的任务；PR 以标签挂在行尾</span>
+      </div>
+      <div id="tree"></div>
+    </div>
+    <div class="card side">
+      <div class="sec">
+        <h2>这几天发生了什么 <span class="muted" style="font-weight:400">· 近 7 天</span></h2>
+        ${[
+          ['刚刚','devboard 3.1 · Claude 会话仍在运行'],
+          ['09-25','#381 已在 GitHub 合并（任务 2.1）<b style="color:var(--warn)"> · 本地还没 pull</b>'],
+          ['09-25','#372 开了 draft PR（collab 任务 15.2）'],
+          ['09-25','#369 已合并 · <span style="color:var(--warn)">没关联到任务</span>'],
+          ['09-25','#365 已合并 → M0-d 11、12 完成'],
+          ['09-24','#360 已合并 → M0-c 3–10 完成'],
+          ['09-22','devboard 3.2 的会话之后再没动过（停滞）'],
+        ].map(([t,x])=>`<div class="ev"><span class="t">${t}</span><span>${x}</span></div>`).join('')}
+      </div>
+      <div class="sec">
+        <h2>未关联任务的 PR <span class="count">${UNLINKED.length}</span></h2>
+        <div class="muted" style="font-size:11px;margin-bottom:6px">标题里认不出任务号或里程碑代号。点「关联」挑一个任务。</div>
+        ${UNLINKED.map(n=>`<div class="unl">${prTag(n)}<span class="tt" title="${esc(PRS[n].t)}">${esc(PRS[n].t)}</span><button class="btn" style="padding:1px 8px">关联</button></div>`).join('')}
+      </div>
+      <div class="sec">
+        <h2>各份文档进度</h2>
+        ${DOCS.map(doc=>{const L=ALL.filter(t=>t.doc===doc.id);const dn=L.filter(t=>t.st==='done').length;
+          return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${esc(doc.title)}</span><span class="muted">${dn}/${L.length} · ${pct(dn,L.length)}%</span></div>${stackBar(L)}</div>`;}).join('')}
+      </div>
+    </div>
+  </div>`;
+  renderTree();
+  document.getElementById('onlyOpen').onchange=renderTree;
+}
+function renderTree(){
+  const only=document.getElementById('onlyOpen').checked;
+  document.getElementById('tree').innerHTML=DOCS.map(doc=>{
+    const L=ALL.filter(t=>t.doc===doc.id);const dn=L.filter(t=>t.st==='done').length;
+    return `<div class="doc">
+      <div class="grp lv1"><button type="button" class="caret" aria-label="折叠文档 ${esc(doc.id)}" aria-expanded="true" onclick="tog(this.parentElement)">▾</button><span class="gname">${esc(doc.title)}</span><span class="muted" style="font-size:11px">${esc(doc.path)}</span>
+        <span class="gp">${dn}/${L.length}${stackBar(L)}</span></div>
+      <div class="rows">${doc.groups.map(g=>{
+        const G=L.filter(t=>t.g===g.id);const gd=G.filter(t=>t.st==='done').length;const closed=only&&gd===G.length;
+        return `<div class="gblock ${closed?'':'open'}"><div class="grp lv2 ${closed?'closed':''}"><button type="button" class="caret" aria-label="折叠分组 ${esc(doc.id)}/${esc(g.id)}" aria-expanded="${!closed}" onclick="tog(this.parentElement)">▾</button><span class="gname">${esc(g.t)}</span>
+          <span class="gp">${gd===G.length?'<span class="st done">● 全部完成</span>':''} ${gd}/${G.length}${stackBar(G)}</span></div>
+          <div class="rows ${closed?'hide':''}">${G.map(t=>`
+            <div class="row">
+              <span class="st-cell">${stBadge(t.st)}</span>
+              <span class="id">${t.id}</span>
+              <span class="title">${esc(t.title)}${t.dep?`<span class="dep">依赖 ${t.dep.join('、')}</span>`:''}${t.par?`<span class="dep">∥ 可与 ${t.par.join('、')} 并行</span>`:''}</span>
+              <span class="tags">${tagsOf(t)}</span>
+              <button type="button" class="linkbtn task-detail" aria-label="详情 ${esc(t.key)}" onclick="openTask('${t.key}')">详情</button>
+            </div>`).join('')}</div></div>`;}).join('')}</div></div>`;}).join('');
+}
+function tog(el){const closed=el.classList.toggle('closed');el.nextElementSibling.classList.toggle('hide');el.querySelector('button.caret').setAttribute('aria-expanded',String(!closed));if(el.parentElement.classList.contains('gblock'))el.parentElement.classList.toggle('open',!closed);}
+
+/* ============ 下一步 ============ */
+function isReady(t){ if(t.st!=='todo'||t.block||t.unsch) return false;
+  return (t.dep||[]).every(id=>{const x=tk(t.doc,id);return x&&x.st==='done'&&!x.unsynced;});}
+function renderNext(){
+  const ready=ALL.filter(isReady);
+  const soon=ALL.filter(t=>t.st==='todo'&&!isReady(t)&&!t.block&&!t.unsch&&(t.dep||[]).every(id=>{const x=tk(t.doc,id);return x&&x.st!=='todo';}));
+  const blocked=ALL.filter(t=>t.st==='todo'&&(t.block||t.unsch||!(t.dep||[]).every(id=>{const x=tk(t.doc,id);return x&&x.st!=='todo';}))&&!soon.includes(t)&&!ready.includes(t));
+  const card=(t,why,red)=>`<div class="tk" onclick="openTask('${t.key}')"><div class="top">${stBadge(t.st)}<span>${esc(t.doc)} · ${t.id}</span></div><div class="tt">${esc(t.title)}</div><div class="why ${red?'red':''}">${why}</div></div>`;
+  const depWhy=t=>(t.dep||[]).map(id=>{const x=tk(t.doc,id);return `${id} ${x?(x.unsynced?'已合并·待同步本地':S[x.st][1]):'?'}${x&&x.pr?' #'+x.pr.join(' #'):''}`;}).join('；');
+  document.getElementById('v-next').innerHTML=`
+  <div class="cols">
+    <div class="card col"><h2>▶ 可开工 <span class="count">${ready.length}</span></h2><div class="hint">前置任务均已确认完成。同一个框里的任务可以并行做。</div>
+      <div class="batch"><div class="bl">第 1 批 · 可并行</div>${ready.map(t=>card(t,'依赖已满足：'+(t.dep||[]).join('、'))).join('')}</div>
+    </div>
+    <div class="card col"><h2>⏳ 即将可开工 <span class="count">${soon.length}</span></h2><div class="hint">前置任务已经在做或有 PR 了，全部确认完成后才能开工。</div>
+      ${soon.map(t=>card(t,'在等：'+depWhy(t))).join('')}
+    </div>
+    <div class="card col"><h2>⛔ 被阻塞 <span class="count">${blocked.length}</span></h2><div class="hint">外部条件或前置任务还没开始。</div>
+      ${blocked.map(t=>card(t,t.block?'外部前置：'+t.block.join('、'):(t.unsch||'在等：'+depWhy(t)),!!t.block)).join('')}
+    </div>
+    <div class="card col"><h2>🙋 等我处理 <span class="count warn">6</span></h2><div class="hint">只有你能推进的事。</div>
+      <div class="tk" onclick="openTask('devboard-mvp#2.1')"><div class="top"><span class="pr unsynced">#381 已合并·待同步本地</span></div><div class="tt">本地 pull 一下 release/v2</div><div class="why">GitHub 09-25 已合并；本地还没有这个合并提交。同步后 2.1 才算完成，5.1、5.3 才会解锁。</div></div>
+      <div class="tk" onclick="openTask('devboard-mvp#2.2')"><div class="top">${prTag(383)}</div><div class="tt">合并 #383（ADR 解析）</div><div class="why">ready 已等 7 天</div></div>
+      <div class="tk" onclick="openTask('devboard-mvp#2.3')"><div class="top">${prTag(384)}</div><div class="tt">review #384（Mermaid 依赖图）</div><div class="why">draft 已等 4 天</div></div>
+      <div class="tk" onclick="openTask('collab-m0-space-run#15.2')"><div class="top">${prTag(372)}</div><div class="tt">review #372（collab 15.2 文档）</div><div class="why">draft 已等 1 天</div></div>
+      <div class="tk" onclick="openTask('devboard-mvp#3.2')"><div class="top"><span class="ai stalled"><span class="dot"></span>Claude 停滞 4 天</span></div><div class="tt">3.2 焦点段识别：会话停了</div><div class="why">最后一条：「子 agent 派活的识别还没做」。要不要接着做？</div></div>
+      <div class="tk"><div class="top"><span class="blk">⛔ P1 / P5</span></div><div class="tt">提供 sandbox 访问 + Auth 白名单</div><div class="why">卡住 collab 13、14，并连带 15.1、16、17</div></div>
+    </div>
+  </div>`;
+}
+
+/* ============ 甘特 ============ */
+const G0=new Date('2026-09-14T00:00:00'), GDAYS=22, PX=40;
+const x=dt=>(dt-G0)/864e5*PX;
+function ganttRows(){
+  const rows=[];
+  DOCS.forEach(doc=>{
+    const L=ALL.filter(t=>t.doc===doc.id);
+    rows.push({k:'g1',label:doc.title,doc:doc.id,prog:`${L.filter(t=>t.st==='done').length}/${L.length}`});
+    doc.groups.forEach(g=>{
+      const G=L.filter(t=>t.g===g.id);const all=G.every(t=>t.st==='done');
+      const spans=G.flatMap(t=>[t.s&&d(t.s),t.e&&d(t.e),t.est&&d(t.est[1])]).filter(Boolean);
+      const gid=doc.id+'/'+g.id;
+      rows.push({k:'g2',label:g.t,gid,closed:GSTATE[gid]??all,prog:`${G.filter(t=>t.st==='done').length}/${G.length}`,
+        s:spans.length?new Date(Math.min(...spans)):null,e:spans.length?new Date(Math.max(...spans)):null,unsch:G.filter(t=>t.unsch||t.block).length});
+      if(!(GSTATE[gid]??all)) G.forEach(t=>rows.push({k:'t',t}));
+    });
+  });
+  return rows;
+}
+const GSTATE={};
+function renderGantt(){
+  const rows=ganttRows();
+  const W=GDAYS*PX;
+  let head='';
+  for(let i=0;i<=GDAYS;i++){const dt=new Date(G0.getTime()+i*864e5);const wk=dt.getDay()===1;
+    head+=`<div class="day ${wk?'wk':''}" style="left:${i*PX}px"></div><div class="dlab" style="left:${i*PX}px">${dt.getDate()}</div>`;
+    if(i===0||dt.getDate()===1) head+=`<div class="mlab" style="left:${i*PX}px">${dt.getMonth()+1} 月</div>`;}
+  const grid=()=>{let s='';for(let i=0;i<=GDAYS;i++){const dt=new Date(G0.getTime()+i*864e5);s+=`<div class="day ${dt.getDay()===1?'wk':''}" style="left:${i*PX}px"></div>`;}return s;};
+  const labels=rows.map((r,i)=>{
+    if(r.k==='g1') return `<div class="gl g1" data-i="${i}">${esc(r.label)}<span class="muted" style="margin-left:auto;font-weight:400">${r.prog}</span></div>`;
+    if(r.k==='g2') return `<div class="gl g2" data-i="${i}" onclick="GSTATE['${r.gid}']=!${r.closed};renderGantt()"><span style="color:var(--muted)">${r.closed?'▸':'▾'}</span><span class="tt">${esc(r.label)}</span><span class="muted" style="margin-left:auto;font-weight:400">${r.prog}${r.unsch?` · <span style="color:var(--danger)">${r.unsch} 无法排期</span>`:''}</span></div>`;
+    const t=r.t;return `<div class="gl t" data-i="${i}" data-key="${t.key}" onclick="openTask('${t.key}')" onmouseenter="hl('${t.key}')" onmouseleave="hl()"><span class="st ${t.st}"><span class="ic">${S[t.st][0]}</span></span><span class="id">${t.id}</span><span class="tt">${esc(t.title)}</span></div>`;
+  }).join('');
+  const bars=rows.map((r,i)=>{
+    let inner=grid();
+    if(r.k==='g2'&&r.s){inner+=`<div class="bar sum" style="left:${x(r.s)}px;width:${Math.max(x(r.e)-x(r.s)+PX,6)}px" title="分组范围"></div>`;}
+    if(r.k==='t'){const t=r.t;const col=`var(--s-${t.st})`;
+      if(t.s){const end=t.e?d(t.e):TODAY;const w=Math.max(x(end)-x(d(t.s))+(t.e?PX:0),6);
+        inner+=`<div class="bar" style="left:${x(d(t.s))}px;width:${w}px;background:${col}" onclick="openTask('${t.key}')" onmouseenter="hl('${t.key}')" onmouseleave="hl()" title="事实：开始 ${t.s}${t.e?' · 合并 '+t.e:' · 至今'}"></div>`;}
+      if(t.est){const s=Math.max(x(d(t.est[0])),x(TODAY));const w=x(d(t.est[1]))-s+PX;
+        inner+=`<div class="bar est" style="left:${s}px;width:${w}px;color:${col}" onclick="openTask('${t.key}')" onmouseenter="hl('${t.key}')" onmouseleave="hl()" title="预估：${t.est[0]} → ${t.est[1]}（${t.s?'':'默认工期 · '}按依赖排）"></div>
+          <div class="blabel" style="left:${s+w+4}px">预估${t.over?' · <b style="color:var(--warn)">⚠ 超出预计</b>':''}</div>`;}
+      if(t.notime) inner+=`<div class="blabel" style="left:8px">无时间（仅文档确认、无 PR 无会话）</div>`;
+      if(t.block||t.unsch) inner+=`<div class="blabel" style="left:${x(TODAY)+6}px;color:var(--danger)">无法排期：${esc(t.block?'外部前置 '+t.block.map(b=>b.split(' ')[0]).join('、'):t.unsch)}</div>`;
+    }
+    return `<div class="gr ${r.k==='g1'?'g1':''}" data-i="${i}" ${r.k==='t'?`data-key="${r.t.key}"`:''}>${inner}</div>`;
+  }).join('');
+  document.getElementById('v-gantt').innerHTML=`
+  <div class="card">
+    <div class="legend">
+      ${Object.entries(S).map(([k,[ic,l]])=>`<span><span class="sw" style="background:var(--s-${k})"></span>${ic} ${l}</span>`).join('')}
+      <span><span class="sw bar est" style="position:static;display:inline-block;color:var(--s-todo)"></span>预估（非事实）</span>
+      <span style="color:var(--today)">┃ 今天</span>
+      <span class="spacer" style="flex:1"></span>
+      <div class="seg"><button>周</button><button class="on">天</button><button>月</button></div>
+      <label class="muted" style="font-size:12px"><input type="checkbox"> 显示全部依赖线</label>
+    </div>
+    <div class="note">实色 = 真实发生（开始取 AI 会话或 PR 创建，结束取 PR 合并）。斜纹 = 预估：只按依赖先后排，没写预计耗时的按默认 1 天。鼠标移到任务上会显示它的前置和后续。</div>
+    <div class="gantt">
+      <div class="glabels"><div class="gh">任务（点分组可折叠）</div>${labels}</div>
+      <div class="gscroll"><div class="gtrack" style="width:${W+PX}px">
+        <div class="gh" style="position:relative">${head}</div>
+        ${bars}
+        <div class="today" style="left:${x(TODAY)}px;top:0"><span>今天</span></div>
+        <svg class="links" id="links" width="${W+PX}" height="${44+rows.length*26}"></svg>
+      </div></div>
+    </div>
+  </div>`;
+  /* 打开时把「今天」滚到可视区 70% 处，保证过去和未来都能看到 */
+  const sc=document.querySelector('.gscroll');sc.scrollLeft=Math.max(0,x(TODAY)-sc.clientWidth*0.7);
+}
+/* 悬停：高亮前置/后续，画依赖折线，其余变淡 */
+function hl(key){
+  const svg=document.getElementById('links');if(!svg)return;svg.innerHTML='';
+  document.querySelectorAll('.gl,.gr').forEach(e=>e.classList.remove('dim','hl'));
+  if(!key)return;
+  const t=BYKEY[key];
+  const pre=(t.dep||[]).map(id=>tk(t.doc,id)).filter(Boolean);
+  const post=ALL.filter(o=>o.doc===t.doc&&(o.dep||[]).includes(t.id));
+  const par=(t.par||[]).map(id=>tk(t.doc,id)).filter(Boolean);
+  const keep=new Set([t,...pre,...post,...par].map(o=>o.key));
+  document.querySelectorAll('.gl[data-key],.gr[data-key]').forEach(e=>{
+    if(!keep.has(e.dataset.key)) e.classList.add('dim'); else if(par.some(p=>p.key===e.dataset.key)) e.classList.add('hl');});
+  const rowY=k=>{const e=document.querySelector(`.gr[data-key="${k}"]`);return e?e.offsetTop+13:null;};
+  const endX=o=>o.est?x(d(o.est[1]))+PX:o.e?x(d(o.e))+PX:o.s?x(TODAY):null;
+  const startX=o=>o.s?x(d(o.s)):o.est?Math.max(x(d(o.est[0])),x(TODAY)):null;
+  const line=(a,b,col)=>{const y1=rowY(a.key),y2=rowY(b.key),x1=endX(a),x2=startX(b);if(y1==null||y2==null||x1==null||x2==null)return;
+    const mx=Math.max(x1+8,Math.min(x2-8,x1+8));
+    svg.insertAdjacentHTML('beforeend',`<path d="M${x1} ${y1} H${mx} V${y2} H${x2}" fill="none" stroke="${col}" stroke-width="1.5"/><path d="M${x2} ${y2} l-5 -3 v6 z" fill="${col}"/>`);};
+  pre.forEach(p=>line(p,t,'var(--accent)'));post.forEach(p=>line(t,p,'var(--muted)'));
+}
+
+
+/* ============ 关系图 ============
+   按文档画：列 = 依赖层级（没有前置的在第 0 列，其余 = 最长前置链 + 1），列内按文档顺序。
+   实线箭头 = 依赖（前置 → 后续）；绿色虚线无箭头 = 文档写明可并行。 */
+let GRAPH_DOC='devboard-mvp', GRAPH_FADE_DONE=true, GRAPH_OPEN_ONLY=true;
+function renderGraph(){
+  /* 「只看未完成」：长文档里已完成的任务占满画面，隐藏后只剩还要做的部分；指向已完成任务的依赖线一并省略 */
+  const L=ALL.filter(t=>t.doc===GRAPH_DOC&&!(GRAPH_OPEN_ONLY&&t.st==='done'));
+  const by=Object.fromEntries(L.map(t=>[t.id,t]));
+  const lay={};const layer=t=>{if(lay[t.id]!=null)return lay[t.id];lay[t.id]=0;
+    const ds=(t.dep||[]).map(id=>by[id]).filter(Boolean);lay[t.id]=ds.length?1+Math.max(...ds.map(layer)):0;return lay[t.id];};
+  L.forEach(layer);
+  const cols=[];L.forEach(t=>{(cols[lay[t.id]]=cols[lay[t.id]]||[]).push(t);});
+  /* 列内排序：按前置在上一列的平均位置（重心法）排一遍，明显减少连线交叉；没有前置的保持文档顺序 */
+  const rank={};cols.forEach(c=>{c.forEach((t,j)=>{const ds=(t.dep||[]).filter(id=>rank[id]!=null);t._bc=ds.length?ds.reduce((a,id)=>a+rank[id],0)/ds.length:j;});
+    c.sort((a,b)=>a._bc-b._bc);c.forEach((t,j)=>rank[t.id]=j);});
+  const NW=178,NH=42,CG=64,RG=12,PAD=24,TOP=28;
+  const pos={};cols.forEach((c,i)=>c.forEach((t,j)=>pos[t.id]={x:PAD+i*(NW+CG),y:TOP+j*(NH+RG)}));
+  const W=PAD*2+cols.length*(NW+CG), H=TOP+Math.max(...cols.map(c=>c.length))*(NH+RG)+PAD;
+  let edges='',pars='',seen=new Set();
+  L.forEach(t=>{(t.dep||[]).forEach(id=>{const a=pos[id],b=pos[t.id];if(!a)return;
+      const x1=a.x+NW,y1=a.y+NH/2,x2=b.x,y2=b.y+NH/2,mx=(x1+x2)/2;
+      edges+=`<path class="gedge" data-a="${id}" data-b="${t.id}" d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2-6} ${y2}" marker-end="url(#arr)"/>`;});
+    (t.par||[]).forEach(id=>{const k=[t.id,id].sort().join('|');if(seen.has(k)||!pos[id])return;seen.add(k);
+      const a=pos[t.id],b=pos[id];
+      const sameCol=a.x===b.x;
+      const d=sameCol?`M${a.x+NW} ${a.y+NH/2} C${a.x+NW+26} ${a.y+NH/2} ${b.x+NW+26} ${b.y+NH/2} ${b.x+NW} ${b.y+NH/2}`
+                     :`M${a.x+NW/2} ${a.y+NH} L${b.x+NW/2} ${b.y}`;
+      pars+=`<path class="gedge par" data-a="${t.id}" data-b="${id}" d="${d}"/>`;});});
+  const nodes=L.map(t=>{const p=pos[t.id];const cls=[t.st==='done'&&GRAPH_FADE_DONE?'done':'',(t.block||t.unsch)?'blocked':''].join(' ');
+    const title=t.title.length>11?t.title.slice(0,11)+'…':t.title;
+    const extra=t.block?'⛔ '+t.block.map(b=>b.split(' ')[0]).join('、'):(t.pr?'#'+t.pr.join(' #'):(t.ai&&AIS[t.id]?(AIS[t.id].st==='running'?'● Claude 运行中':'● Claude 停滞'):''));
+    return `<g class="gnode ${cls}" data-id="${t.id}" transform="translate(${p.x},${p.y})" onmouseenter="graphHl('${t.id}')" onmouseleave="graphHl()" onclick="openTask('${t.key}')">
+      <title>${esc(t.id+' '+t.title+' · '+S[t.st][1])}</title>
+      <rect class="box" width="${NW}" height="${NH}" rx="6"/>
+      <rect class="bar" width="4" height="${NH}" rx="2" style="fill:var(--s-${t.st})"/>
+      <text x="12" y="16"><tspan class="gid">${esc(t.id)}</tspan>  ${esc(S[t.st][0])} ${esc(title)}</text>
+      <text x="12" y="32" style="font-size:10px;fill:${t.block?'var(--danger)':'var(--muted)'}">${esc(extra||S[t.st][1])}</text></g>`;}).join('');
+  const heads=cols.map((c,i)=>`<text class="laycol" x="${PAD+i*(NW+CG)}" y="16">${i===0?'第 1 层 · 无前置':'第 '+(i+1)+' 层'}</text>`).join('');
+  document.getElementById('v-graph').innerHTML=`
+  <div class="card">
+    <div class="legend">
+      <select id="gdoc">${DOCS.map(d=>`<option value="${d.id}" ${d.id===GRAPH_DOC?'selected':''}>${esc(d.title)}</option>`).join('')}</select>
+      <span><svg width="34" height="10"><path d="M2 5 H26" stroke="var(--muted)" stroke-width="1.5"/><path d="M32 5 l-6 -3 v6z" fill="var(--muted)"/></svg> 依赖（先后顺序）</span>
+      <span><svg width="30" height="10"><path d="M2 5 H28" stroke="var(--s-done)" stroke-width="1.5" stroke-dasharray="4 4"/></svg> 可并行</span>
+      <span><svg width="18" height="12"><rect x="1" y="1" width="16" height="10" rx="2" fill="none" stroke="var(--danger)" stroke-dasharray="3 2"/></svg> 被阻塞 / 无法排期</span>
+      <span><svg width="18" height="12"><rect x="1" y="1" width="16" height="10" rx="2" fill="none" stroke="var(--danger)" stroke-width="2"/></svg> 依赖成环</span>
+      <span class="spacer" style="flex:1"></span>
+      <label class="muted" style="font-size:12px"><input type="checkbox" id="gopen" ${GRAPH_OPEN_ONLY?'checked':''}> 只看未完成</label>
+      <label class="muted" style="font-size:12px"><input type="checkbox" id="gfade" ${GRAPH_FADE_DONE?'checked':''}> 淡化已完成</label>
+    </div>
+    <div class="note">从左往右读：越往右越晚才能做。同一列里的任务互相不依赖，前置满足后可以一起做。鼠标移到任务上高亮它的前置（蓝）、后续（灰）和可并行任务（绿），点任务看详情。</div>
+    <div class="gwrap"><svg width="${W}" height="${H}" id="gsvg">
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="var(--muted)"/></marker></defs>
+      ${heads}${pars}${edges}${nodes}</svg></div>
+  </div>`;
+  document.getElementById('gdoc').onchange=e=>{GRAPH_DOC=e.target.value;renderGraph();};
+  document.getElementById('gfade').onchange=e=>{GRAPH_FADE_DONE=e.target.checked;renderGraph();};
+  document.getElementById('gopen').onchange=e=>{GRAPH_OPEN_ONLY=e.target.checked;renderGraph();};
+}
+function graphHl(id){
+  const svg=document.getElementById('gsvg');if(!svg)return;
+  svg.querySelectorAll('.gnode,.gedge').forEach(e=>e.classList.remove('fade','sel','pre','post','parhl','on'));
+  if(!id)return;
+  const t=tk(GRAPH_DOC,id);
+  const pre=new Set(t.dep||[]), par=new Set(t.par||[]);
+  const post=new Set(ALL.filter(o=>o.doc===GRAPH_DOC&&(o.dep||[]).includes(id)).map(o=>o.id));
+  svg.querySelectorAll('.gnode').forEach(n=>{const i=n.dataset.id;
+    if(i===id)n.classList.add('sel');else if(pre.has(i))n.classList.add('pre');else if(post.has(i))n.classList.add('post');else if(par.has(i))n.classList.add('parhl');else n.classList.add('fade');});
+  svg.querySelectorAll('.gedge').forEach(e=>{(e.dataset.a===id||e.dataset.b===id)?e.classList.add('on'):e.classList.add('fade');});
+}
+
+/* ============ 需要确认 / 诊断（占位，展示形态） ============ */
+function renderCheck(){
+  document.getElementById('v-check').innerHTML=`<div class="card" style="padding:14px">
+    <h2>需要确认 <span class="muted" style="font-weight:400">· 这些只是提示，不会改动任务状态</span></h2>
+    ${[
+      ['文档和 PR 对不上','collab 15.2','tasks.md 里已勾选，但 #372 还是 draft','collab-m0-space-run#15.2'],
+      ['PR 没关联到任务','#369','标题「UI 改进轮…」里没有任务号或里程碑代号，可能对应任务 18','collab-m0-space-run#18'],
+      ['会话停滞','devboard 3.2','Claude 会话 4 天没有新记录，任务还没有 PR','devboard-mvp#3.2'],
+    ].map(([a,b,c,k])=>`<div class="box" style="cursor:pointer" onclick="openTask('${k}')"><b>${a}</b> · ${b}<div class="src">${c}</div></div>`).join('')}
+  </div>`;
+  document.getElementById('v-diag').innerHTML=`<div class="card" style="padding:14px">
+    <h2>诊断</h2>
+    <div class="kv">
+      <dt>配置</dt><dd>devboard.config.json 已加载 · 项目 1 个</dd>
+      <dt>工作区</dt><dd>acme-chat · release/v2 @ 3e7a9c1d</dd>
+      <dt>文档</dt><dd>36 份 spec（2 份含未识别行，可展开看行号）· 37 篇 ADR · Mermaid 依赖图已启用 1 份</dd>
+      <dt>AI 会话</dt><dd>Claude Code：~/.claude/projects 下 3 个相关目录 · 42 个会话 · 识别出任务 9 个 · 只在 AI 回复里被提到的 31 次（不计）</dd>
+      <dt>GitHub</dt><dd>gh 已登录 · 本轮 1 次请求 · 剩余额度 4 988 / 5 000</dd>
+    </div></div>`;
+}
+
+/* ============ 任务详情抽屉 ============ */
+function openTask(key){
+  const t=BYKEY[key];if(!t)return;
+  const a=t.ai?AIS[t.id]:null;
+  const pre=(t.dep||[]).map(id=>{const x=tk(t.doc,id);return x?`<a href="#" onclick="openTask('${x.key}');return false">${id}</a> ${stBadge(x.st)}`:`${id} <span class="flag">找不到</span>`;}).join('　')||'<span class="muted">无</span>';
+  const post=ALL.filter(o=>o.doc===t.doc&&(o.dep||[]).includes(t.id)).map(o=>`<a href="#" onclick="openTask('${o.key}');return false">${o.id}</a>`).join('、')||'<span class="muted">无</span>';
+  const why={
+    done:t.pr?`关联 PR #${t.pr.join('/#')} 已合并，且本地已包含合并提交`:'文档里已勾选，没找到 PR → 仅文档确认',
+    merge:t.unsynced?'PR #381 在 GitHub 上已合并，但本地分支还没有这个合并提交 → 仍算「等待合并」，标「已合并·待同步到本地」；本地 pull 后自动变成已合并完成':'关联 PR 是 ready（非 draft），还没合并',review:'关联 PR 是 draft',doing:'本项目里有 Claude 会话正在做这个任务，还没有 PR',todo:'没有关联的会话或 PR'}[t.st];
+  document.getElementById('drawer').innerHTML=`
+    <div class="hd"><div style="flex:1"><div class="muted" style="font-size:11px">${esc(t.docTitle)} · ${esc(t.gt)}</div><h2>${t.id}　${esc(t.title)}</h2><div style="margin-top:6px">${stBadge(t.st)} ${tagsOf(t)}</div></div><button class="btn" onclick="closeDrawer()">✕</button></div>
+    <div class="bd">
+      <dl class="kv">
+        <dt>为什么是这个状态</dt><dd>${why}</dd>
+        <dt>前置</dt><dd>${pre}</dd>
+        <dt>后续</dt><dd>${post}</dd>
+        <dt>可并行</dt><dd>${(t.par||[]).join('、')||'<span class="muted">文档没写</span>'}</dd>
+        ${t.block?`<dt>外部阻塞</dt><dd style="color:var(--danger)">${t.block.join('、')}</dd>`:''}
+        <dt>文档位置</dt><dd><code>${esc(t.path)}</code> 第 ${100+t.id.length*37} 行 · <a href="#">查看原文</a></dd>
+      </dl>
+      <h3>PR</h3>
+      ${(t.pr||[]).map(n=>`<div class="box">${prTag(n)} <div style="margin-top:4px">${esc(PRS[n].t)}</div><div class="src">来源：PR 标题里的「${t.doc==='collab-m0-space-run'&&[344,360,365].includes(n)?PRS[n].t.match(/M0-[a-f]/)[0]+'」（里程碑代号，展开为该里程碑全部任务）':'任务 '+t.id+'」'} · <a href="#">解除关联</a></div></div>`).join('')||'<div class="muted" style="margin:6px 0 10px">还没有 PR。</div>'}
+      <button class="btn" style="margin-bottom:14px">＋ 手动关联 PR</button>
+      <h3>AI 会话</h3>
+      ${a?`<div class="box"><div style="display:flex;gap:8px;align-items:center">${aiTag(t)}<b>${esc(a.title)}</b></div>
+        <div class="src" style="margin-top:4px">Claude Code · 开始 ${a.start} · 最近活动 ${a.last}</div>
+        <div style="margin-top:6px">最后一条：「${esc(a.msg)}」</div>
+        <div class="src" style="margin-top:4px">判定依据：你在会话里说「继续做 devboard-mvp 的任务 ${t.id}」</div></div>`
+       :'<div class="muted" style="margin:6px 0">没有关联的 AI 会话。</div>'}
+      <h3 style="margin-top:14px">甘特时间</h3>
+      <div class="box">${t.s?`事实开始 ${t.s}（${a?'AI 会话':'PR 创建'}）`:'未开始'}${t.e?` · 结束 ${t.e}（PR 合并）`:''}${t.est?`<br>预估 ${t.est[0]} → ${t.est[1]}（${t.s?'文档预计耗时':'默认 1 天'}，排在前置之后）`:''}${t.unsch?`<br><span style="color:var(--danger)">无法排期：${esc(t.unsch)}</span>`:''}${t.notime?'无时间：仅文档确认，没有 PR 和会话':''}</div>
+    </div>`;
+  document.getElementById('drawer').classList.add('open');document.getElementById('scrim').classList.add('open');
+}
+function closeDrawer(){document.getElementById('drawer').classList.remove('open');document.getElementById('scrim').classList.remove('open');}
+document.getElementById('scrim').onclick=closeDrawer;
+addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
+
+/* ============ 路由 ============ */
+function go(v){
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  document.querySelectorAll('main>section').forEach(s=>s.classList.toggle('hidden',s.id!=='v-'+v));
+  if(v==='gantt') renderGantt(); if(v==='next') renderNext(); if(v==='graph') renderGraph();
+}
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>go(b.dataset.v));
+document.querySelectorAll('#lineSeg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#lineSeg button').forEach(x=>x.classList.toggle('on',x===b));});
+document.getElementById('themeBtn').onclick=()=>{const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark';};
+renderOverview();renderCheck();
+</script>
+</body>
+</html>

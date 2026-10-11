@@ -1,0 +1,14 @@
+[Unit]
+Description=YUIBoard (devboard) local dashboard
+
+[Service]
+ExecStart="{{NODE}}" "{{SERVER}}"
+WorkingDirectory={{DIR}}/.
+Environment="PATH={{PATH}}"
+Restart=always
+RestartSec=10
+StandardOutput=append:{{LOG}}
+StandardError=append:{{LOG}}
+
+[Install]
+WantedBy=default.target

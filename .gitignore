@@ -1,0 +1,11 @@
+data/
+cache/
+devboard.config.json
+devboard.config.json.bak
+devboard.config.json.lock
+devboard.config.json.rev
+*.log
+# 本机工具产物（Playwright MCP 截图 / 快照、Serena 项目配置）
+.playwright-mcp/
+output/
+.serena/
