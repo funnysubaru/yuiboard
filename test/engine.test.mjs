@@ -464,7 +464,7 @@ test('PR 级冲突 h、i、n 各一正一反；只命中重复编号不说「不
   const types = (prs, cfg) => linkPrs([a, b], prs, cfg).conflicts.map((c) => [c.pr, c.type, c.detail]);
   // h：歧义、不存在、只命中重复编号；反例：唯一命中
   assert.deepEqual(types([pr(1, { title: '任务 3' }), pr(2, { title: '任务 9' }), pr(3, { title: '任务 7' }), pr(4, { title: '任务 5' })]), [
-    [1, 'h', 'PR 标题里的「3」有歧义，可能是 a#3、b#3'],
+    [1, 'h', 'PR 标题里的「3」有歧义，可能是 a#3\u2063、b#3'],
     [2, 'h', 'PR 标题引用了不存在的任务：9'],
     [3, 'h', 'PR 标题里的「7」对应的编号在文档里重复出现，无法确定是哪一条'],
   ]);
@@ -575,7 +575,7 @@ test('② 只说「任务 3 先做」、无上下文 → 歧义不关联 + 会�
   const amb = sBoard(docs, [session('s2', [say(docs, '任务 3 先做', at(20), at(15))])]);
   assert.ok(amb.tasks.every((t) => !t.sessions.length));
   assert.deepEqual(amb.conflicts.filter((c) => c.sessionId).map((c) => [c.type, c.sessionId, c.detail, c.source.text]),
-    [['h', 's2', '会话「标题 s2」里的「3」有歧义，可能是 a#3、b#3', '任务 3 先做']]);
+    [['h', 's2', '会话「标题 s2」里的「3」有歧义，可能是 a#3\u2063、b#3', '任务 3 先做']]);
   assert.deepEqual(amb.diagnostics.sessions, { total: 1, linked: 0, unlinked: 1, aiOnlyMentions: 0 });
   assert.deepEqual(amb.sessions, [], '未关联的会话不进 Board.sessions');
   // 上下文取全会话：先说编号、后读 spec 也能定位

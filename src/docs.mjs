@@ -8,7 +8,8 @@ import path from 'node:path';
 
 import { parseRelations } from './relations.mjs';
 import { discoverAdrs, parseAdrDoc } from './adr.mjs';
-import { msg } from './msg.mjs';
+import { msg, joinList } from './msg.mjs';
+import { gitEnv } from './config.mjs';
 
 const DEFAULT_MILESTONE_CODE = '(?:里程碑|[Mm]ilestone|マイルストーン)\\s*([A-Za-z]+\\d+(?:-[A-Za-z0-9]+)?)';
 // 分组别名只供文档内依赖引用（「依赖 阶段 1」「depends on Phase 1」「フェーズ 1 に依存」），不参与 PR / 会话匹配。
@@ -144,11 +145,11 @@ export function parseTasksDoc(text, docId, opts = {}) {
   if (tasks.length === 0) {
     parse.state = 'no-tasks';
     parse.reason = unrecognizedLines.length
-      ? msg`没有「- [ ] 编号 标题」格式的行；共 ${uncheckedBoxes} 个无编号复选框；第 ${unrecognizedLines.join('、')} 行像任务行但格式不对`
+      ? msg`没有「- [ ] 编号 标题」格式的行；共 ${uncheckedBoxes} 个无编号复选框；第 ${joinList(unrecognizedLines)} 行像任务行但格式不对`
       : msg`没有「- [ ] 编号 标题」格式的行；共 ${uncheckedBoxes} 个无编号复选框`;
   } else if (unrecognizedLines.length) {
     parse.state = 'partial';
-    parse.reason = msg`第 ${unrecognizedLines.join('、')} 行像任务行但未能识别`;
+    parse.reason = msg`第 ${joinList(unrecognizedLines)} 行像任务行但未能识别`;
   }
   return { title, parse, groups, tasks, prerequisites: rel.prerequisites, relations: rel.relations };
 }
@@ -260,7 +261,7 @@ export async function gitRead(ws, args, { raw = false } = {}) {
   }
   const { stdout } = await runGit('git', ['-C', ws, '-c', 'core.quotepath=false', ...args], {
     timeout: 10_000,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+    env: gitEnv(),
     ...(raw ? { maxBuffer: 64 * 1024 * 1024 } : {}),
   });
   return raw ? stdout : stdout.trim();

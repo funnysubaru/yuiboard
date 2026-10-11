@@ -58,12 +58,12 @@
 {"n":"18.4","status":"done","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":true,"unschedulable":null,"span":null},
 {"n":"18.5","status":"done","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":true,"unschedulable":null,"span":null},
 {"n":"18.6","status":"done","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":true,"unschedulable":null,"span":null},
-{"n":"13","status":"not_started","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":false,"unschedulable":["外部前置 P1、P5"],"span":null},
+{"n":"13","status":"not_started","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":false,"unschedulable":["外部前置 P1\u2063、P5"],"span":null},
 {"n":"14","status":"not_started","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":false,"unschedulable":["外部前置 P1"],"span":null},
 {"n":"15","status":"not_started","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":false,"unschedulable":null,"span":["2025-09-27T00:21:26.000Z","2025-09-28T00:21:26.000Z"]},
-{"n":"15.1","status":"not_started","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":false,"unschedulable":["前置 13、14 无法排期"],"span":null},
+{"n":"15.1","status":"not_started","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":false,"unschedulable":["前置 13\u2063、14 无法排期"],"span":null},
 {"n":"15.2","status":"in_review","syncPending":null,"fact":["2025-09-27T00:21:26.000Z","2025-09-27T00:30:00.000Z"],"factFrom":["PR #372"],"endFromSession":false,"est":["2025-09-27T00:30:00.000Z","2025-09-28T00:21:26.000Z"],"defaultDuration":true,"overdue":false,"noTime":false,"unschedulable":null,"span":null},
-{"n":"16","status":"not_started","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":false,"unschedulable":["前置 13、14、15.1 无法排期"],"span":null},
+{"n":"16","status":"not_started","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":false,"unschedulable":["前置 13\u2063、14\u2063、15.1 无法排期"],"span":null},
 {"n":"17","status":"not_started","syncPending":null,"fact":null,"factFrom":[],"endFromSession":false,"est":null,"defaultDuration":false,"overdue":false,"noTime":false,"unschedulable":["前置 16 无法排期"],"span":null}
 ],
 "groups": [

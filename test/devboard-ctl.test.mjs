@@ -13,8 +13,9 @@ import { check, findProject, pickPort, isFree, isDevboard, renderPlist, findAgen
 const CTL = fileURLToPath(new URL('../ops/devboard-ctl.mjs', import.meta.url));
 const TEMPLATE = fileURLToPath(new URL('../ops/devboard.plist.template', import.meta.url));
 const tmpDir = async () => realpathSync(await mkdtemp(path.join(os.tmpdir(), 'devboard-ctl-')));
-const runCtl = (args) => new Promise((resolve) => {
-  execFile(process.execPath, [CTL, ...args], (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim().split('\n').at(-1)) }));
+// 命令行输出的说明按 DEVBOARD_LANG 翻译（N26.1）；默认用中文跑，与函数返回值（中文原文）直接比较。
+const runCtl = (args, lang = 'zh') => new Promise((resolve) => {
+  execFile(process.execPath, [CTL, ...args], { env: { ...process.env, DEVBOARD_LANG: lang } }, (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim().split('\n').at(-1)) }));
 });
 async function gitRepo(dir) {
   await mkdir(dir, { recursive: true });
@@ -43,6 +44,22 @@ test('用法错误：退出 1 并给出用法', async () => {
   const r = await runCtl(['nope']);
   assert.equal(r.code, 1);
   assert.match(r.out.error, /用法：devboard-ctl/);
+});
+
+test('命令行输出跟 DEVBOARD_LANG：英文 / 日文的用法与配置错误说明，reason 等机器字段不变（N26.1）', async () => {
+  const en = await runCtl(['nope'], 'en');
+  assert.equal(en.code, 1);
+  assert.match(en.out.error, /^Usage: devboard-ctl check \[config path\]/);
+  const ja = await runCtl(['nope'], 'ja');
+  assert.match(ja.out.error, /^使い方：devboard-ctl/);
+  const dir = await tmpDir();
+  const bad = path.join(dir, 'bad.json');
+  await writeFile(bad, '{ "projects": [ x ] }');
+  const zh = await runCtl(['check', bad]);
+  const b = await runCtl(['check', bad], 'en');
+  assert.equal(b.out.errors[0].projectId, null);
+  assert.notEqual(b.out.errors[0].message, zh.out.errors[0].message, '说明已翻译');
+  assert.doesNotMatch(b.out.errors[0].message, /[\u4e00-\u9fff]{4}/, `英文说明里不剩成段中文：${b.out.errors[0].message}`);
 });
 
 test('findProject：~/、相对路径、尾斜杠、软链、NFD 都认作同一仓库；其它仓库为 null', async () => {
@@ -453,7 +470,7 @@ test('CLI：入口路径经符号链接也能识别为直接运行（不会 exit
   execFileSync('ln', ['-s', ROOT, link]);
   const linkedCtl = path.join(link, 'ops', 'devboard-ctl.mjs');
   const r = await new Promise((resolve) => {
-    execFile(process.execPath, [linkedCtl, 'bogus'], (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim().split('\n').at(-1)) }));
+    execFile(process.execPath, [linkedCtl, 'bogus'], { env: { ...process.env, DEVBOARD_LANG: 'zh' } }, (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim().split('\n').at(-1)) }));
   });
   assert.equal(r.code, 1);
   assert.match(r.out.error, /用法：devboard-ctl/);
@@ -595,6 +612,22 @@ test('save：目标项目 check 不过 → 恢复 .bak，文件逐字节还原�
   const ok = await saveUpdate(s.file, 'demo', { name: '演示' });
   assert.equal(ok.ok, true, JSON.stringify(ok));
   assert.ok(ok.otherErrors.some((e) => e.projectId === 'broken'));
+});
+
+test('CLI：保存成功时别的项目原有的错误（otherErrors）也按 DEVBOARD_LANG 翻译，机器字段不变（PR #35 review）', async (t) => {
+  const s = await saveSpace();
+  const dir = await ctlSpace(t, { projects: [{ id: 'broken' }] });
+  const cli = path.join(dir, 'ops', 'devboard-ctl.mjs');
+  const run = (lang, id) => new Promise((resolve) => {
+    const child = execFile(process.execPath, [cli, 'save', '--new'], { env: { ...process.env, DEVBOARD_LANG: lang } }, (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim()) }));
+    child.stdin.end(JSON.stringify(newProj(id, id === 'en' ? s.repo : s.other)));
+  });
+  for (const lang of ['en', 'ja']) {
+    const r = await run(lang, lang);
+    assert.equal(r.code, 0, JSON.stringify(r.out));
+    assert.ok(r.out.otherErrors.length > 0 && r.out.otherErrors.every((e) => e.projectId === 'broken'), JSON.stringify(r.out.otherErrors));
+    for (const e of r.out.otherErrors) assert.doesNotMatch(e.message, lang === 'en' ? /[\u4e00-\u9fff]/ : /项目|缺少|至少需要/, `${lang}: ${e.message}`);
+  }
 });
 
 test('remove：删掉该项目、其它原样；id 不存在 → not-found 且文件不动', async () => {

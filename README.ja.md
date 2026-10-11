@@ -26,9 +26,19 @@ UI は English・中文・日本語に対応しています。ブラウザの言
 
 必要なもの：Node 24.x と git。PR を表示するには [GitHub CLI](https://cli.github.com/) に `gh auth login` でサインインしておく必要があります（読み取り権限で十分です）。
 
+**まずは試してみる**：架空のプロジェクト（ドキュメント、PR、AI セッションはすべて作り物）でボードを起動できます。設定も GitHub へのサインインも不要です：
+
 ```sh
 git clone https://github.com/funnysubaru/yuiboard.git
 cd yuiboard
+npm run demo
+```
+
+デモは 4318 番から空いている最初のポートで動き、書き込むのはシステムの一時ディレクトリだけです。Ctrl+C で止めるとファイルも削除されます。
+
+自分のリポジトリを表示するには：
+
+```sh
 cp devboard.config.example.json devboard.config.json   # 自分のリポジトリを指すように編集（「設定」を参照）
 node src/server.mjs                                     # または npm start
 ```
@@ -40,6 +50,7 @@ node src/server.mjs --config /path/to/devboard.config.json
 ```
 
 - ポートが使用中ならエラーで終了します。設定の誤りは該当プロジェクトにしか影響しません。そのプロジェクトには問題の項目を示すエラーページが表示され、他のプロジェクトはそのまま動きます。
+- サーバーのログと `devboard-ctl` の出力は既定で英語です。`DEVBOARD_LANG=ja`（または `zh`）を設定するか、日本語 / 中国語の `LANG` で実行すると切り替わります。
 - キャッシュは `cache/<プロジェクト id>/`、手動リンクは `data/<プロジェクト id>/` に保存され、どちらも git の管理対象外です。`cache/` を消しても次回の起動が遅くなるだけです。
 - ドキュメントと PR タイトルは [CONVENTION.ja.md](CONVENTION.ja.md) の書き方に従ってください。既存の `tasks.md` の多くはそのままで使えます。
 
@@ -155,7 +166,7 @@ node ops/devboard-ctl.mjs revert <revision>                # その revision を
 
 ## 読み取り専用の保証
 
-- **リポジトリ**：許可リストにある読み取り専用の git コマンド（`rev-parse`、`merge-base --is-ancestor`、`for-each-ref`、`log`、`worktree list`）だけを `GIT_OPTIONAL_LOCKS=0` 付きで実行します。fetch や checkout はせず、`.git` やインデックスに書き込まず、あなたや AI と git のロックを奪い合わず、リポジトリ内のファイルを一切変更しません。
+- **リポジトリ**：許可リストにある読み取り専用の git コマンド（`rev-parse`、`merge-base --is-ancestor`、`for-each-ref`、`log`、`worktree list`）だけを `GIT_OPTIONAL_LOCKS=0` 付きで実行し、継承した `GIT_DIR` などの `GIT_*` 環境変数は無視します。fetch や checkout はせず、`.git` やインデックスに書き込まず、あなたや AI と git のロックを奪い合わず、リポジトリ内のファイルを一切変更しません。
 - **GitHub**：`gh` を通じて読むだけです。トークンは `gh` が管理し、設定、キャッシュ、ログ、ページには現れません。トークンに読み取り以上の権限があればページで知らせます。
 - **AI セッションログ**：ファイルは読み取り専用で開き、最後の完全な行までしか読まず、セッションディレクトリには何も作りません。キャッシュとページにはメタデータと短い抜粋だけを残し、キーやトークンらしきものはマスクします。会話全体を保存したりアップロードしたりはしません。
 - **サーバー自身**が書き込むのは、自分のディレクトリの `cache/` と `data/` だけです。ページは同一オリジンのリクエストだけを受け付け、書き込みエンドポイント（手動リンク、今すぐ更新）は `Origin` と `Content-Type` を検査します。テレメトリはありません。

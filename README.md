@@ -26,9 +26,19 @@ The UI is available in English, 中文 and 日本語. It follows your browser la
 
 Requirements: Node 24.x and git. To see pull requests you also need the [GitHub CLI](https://cli.github.com/), signed in with `gh auth login`; read-only access is enough.
 
+**Try it first** with a fictional project (made-up docs, pull requests and an AI session). No config or GitHub sign-in needed:
+
 ```sh
 git clone https://github.com/funnysubaru/yuiboard.git
 cd yuiboard
+npm run demo
+```
+
+The demo runs on the first free port from 4318, writes only to your system's temp directory, and deletes its files when you press Ctrl+C.
+
+To watch your own repository:
+
+```sh
 cp devboard.config.example.json devboard.config.json   # point it at your repository (see Configuration)
 node src/server.mjs                                     # or: npm start
 ```
@@ -40,6 +50,7 @@ node src/server.mjs --config /path/to/devboard.config.json
 ```
 
 - If the port is taken, the server exits with an error. A config mistake affects only the project it belongs to: that project shows an error page naming the exact field, and the other projects keep working.
+- Server logs and `devboard-ctl` output are in English by default. Set `DEVBOARD_LANG=zh` or `ja` (or run with a Chinese or Japanese `LANG`) to switch.
 - Caches go to `cache/<project id>/` and manual links to `data/<project id>/`; both are git-ignored. Deleting `cache/` only makes the next start slower.
 - Write your docs and PR titles the way [CONVENTION.md](CONVENTION.md) describes. Most existing `tasks.md` files already work as they are.
 
@@ -155,7 +166,7 @@ Docs, sessions and manual links refresh every 5 seconds; GitHub every `githubRef
 
 ## Read-only guarantees
 
-- **Repositories**: YUIBoard runs only allow-listed read-only git commands (`rev-parse`, `merge-base --is-ancestor`, `for-each-ref`, `log`, `worktree list`) with `GIT_OPTIONAL_LOCKS=0`. It never fetches or checks out, never writes `.git` or the index, never competes with you or your AI for git locks, and never changes any file in the repository.
+- **Repositories**: YUIBoard runs only allow-listed read-only git commands (`rev-parse`, `merge-base --is-ancestor`, `for-each-ref`, `log`, `worktree list`) with `GIT_OPTIONAL_LOCKS=0`, ignoring any inherited `GIT_*` variables such as `GIT_DIR`. It never fetches or checks out, never writes `.git` or the index, never competes with you or your AI for git locks, and never changes any file in the repository.
 - **GitHub**: YUIBoard only reads, through `gh`. Your token stays with `gh` and never appears in the config, caches, logs or pages. If the token has more than read access, the page tells you.
 - **AI session logs**: files are opened read-only and read up to the last complete line, and nothing is created in session directories. Caches and pages keep only metadata and short excerpts, with anything that looks like a key or token masked. Full conversations are never stored or uploaded.
 - **The server itself** writes only to `cache/` and `data/` in its own directory. Pages accept only same-origin requests, and the write endpoints (manual links, refresh now) check `Origin` and `Content-Type`. There is no telemetry.

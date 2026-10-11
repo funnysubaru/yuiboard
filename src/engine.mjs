@@ -6,7 +6,7 @@
 import { extractRefs, extractBranchRefs, resolveRefs } from './refs.mjs';
 import { classifyBranchLine } from './github.mjs';
 import { layoutGantt, summarizeGantt } from './gantt.mjs';
-import { msg } from './msg.mjs';
+import { msg, joinList } from './msg.mjs';
 
 export { layoutGantt, summarizeGantt };
 
@@ -399,9 +399,9 @@ function detectConflicts(tasks, views) {
     if (v.rule === '8.2-3') add(v, 'c', msg('复选框已勾选，但没有关联 PR（仅文档确认）'));
     if (v.deps.dangling.length) {
       const { file, line, text } = v.deps.dangling[0];
-      add(v, 'f', msg`依赖了找不到的对象：${[...new Set(v.deps.dangling.map((x) => x.raw))].join('、')}`, { file, line, text });
+      add(v, 'f', msg`依赖了找不到的对象：${joinList([...new Set(v.deps.dangling.map((x) => x.raw))])}`, { file, line, text });
     }
-    if (v.deps.inCycle) add(v, 'g', msg`与 ${v.deps.cycleWith.map((k) => label(k, t.docId)).join('、')} 构成循环依赖`);
+    if (v.deps.inCycle) add(v, 'g', msg`与 ${joinList(v.deps.cycleWith.map((k) => label(k, t.docId)))} 构成循环依赖`);
     const c = v.childSummary;
     if (c?.total && v.status === 'done' && c.done < c.total) add(v, 'k', msg`父任务已完成，但子任务只完成 ${c.done} / ${c.total}`);
     if (c?.total && v.status === 'not_started' && c.done === c.total) add(v, 'k', msg`子任务已全部完成（${c.total} 个），父任务还是未开始`);
@@ -414,7 +414,7 @@ function detectConflicts(tasks, views) {
 const SOURCE_TEXT = { title: msg('标题'), body: msg('描述'), branch: msg('分支名') };
 const hasRefs = (r) => r.keys.length + r.nums.length + r.codes.length > 0;
 // 列表太长只列前 5 个，detail 是给人看的一句话
-const brief = (keys) => (keys.length > 5 ? msg`${keys.slice(0, 5).join('、')} 等 ${keys.length} 个` : keys.join('、'));
+const brief = (keys) => (keys.length > 5 ? msg`${joinList(keys.slice(0, 5))} 等 ${keys.length} 个` : joinList(keys));
 
 /**
  * PR ↔ 任务（design §3.8.2）；最后叠加手动记录（applyManual，任务 4.1）。
@@ -564,7 +564,7 @@ function detectPrConflicts(tasks, views, prByNum) {
   const byKey = new Map(views.map((v) => [v.key, v]));
   const out = [];
   const add = (v, type, detail) => { v.conflicts.push(type); out.push({ type, taskKey: v.key, detail }); };
-  const nums = (links) => links.map((l) => `#${l.pr}`).join('、');
+  const nums = (links) => joinList(links.map((l) => `#${l.pr}`));
   tasks.forEach((t, i) => {
     const v = views[i];
     if (!v.prs.length) return;
