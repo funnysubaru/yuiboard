@@ -85,6 +85,6 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
 
 ## Workflow
 
-- Use one branch and one PR per change, and describe what changed and how you verified it.
+- Use one branch and one PR per change, and describe what changed and how you verified it. Exception: changes that touch only docs (no code, tests or config) go straight to `main` without a PR.
 - When behavior or counting rules change, update README / CONVENTION (all three languages) and this file in the same PR.
 - Ask the maintainer about product decisions instead of deciding them yourself.
