@@ -146,6 +146,21 @@ test('i18n：用户原文里的 U+2063 不被当成列表标记（PR #34 review�
   assert.ok(tx(detail).endsWith('al\u2063、pha#1, be、\u2063ta#1, gamma#1'), tx(detail));
 });
 
+test('i18n：真实超过 5 个候选的截断歧义说明，中日英都能翻（PR #37 review）', (t_) => {
+  t_.after(() => setLang('zh'));
+  const docs = ['d1', 'd2', 'd3', 'd4', 'd5', 'd6'].map((docId) => ({ docId, archived: false, ...parseTasksDoc('- [ ] 1 one\n', docId) }));
+  const pr = { number: 7, title: 'Task 1', body: '', url: '', state: 'OPEN', isDraft: false, baseRefName: 'main', headRefName: 'b7', labels: [],
+    createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-20T00:00:00Z', readyAt: null, mergedAt: null, closedAt: null, mergeCommit: null };
+  const detail = computeBoard(docs, [pr], [], [], {}, { id: 'demo' }, '2026-09-26T00:00:00.000Z').conflicts.find((c) => c.type === 'h').detail;
+  assert.match(detail, / 等 6 个$/);
+  setLang('zh');
+  assert.equal(tx(detail), 'PR 标题里的「1」有歧义，可能是 d1#1、d2#1、d3#1、d4#1、d5#1 等 6 个');
+  setLang('ja');
+  assert.ok(tx(detail).includes('d1#1、d2#1、d3#1、d4#1、d5#1') && !tx(detail).includes('\u2063'), tx(detail));
+  setLang('en');
+  assert.ok(tx(detail).includes('d1#1, d2#1, d3#1, d4#1, d5#1') && !tx(detail).includes('\u2063'), tx(detail));
+});
+
 test('i18n：SLOTS 登记的模板都是服务端词典里的键，位置都是真实占位符', () => {
   for (const [key, slots] of Object.entries(SLOTS)) {
     assert.ok(Object.hasOwn(enServer, key) && Object.hasOwn(jaServer, key), key);
