@@ -131,8 +131,8 @@ test('i18n：真实歧义说明里文档名含「、」时，引用项原样保�
 
 test('i18n：用户原文里的 U+2063 不被当成列表标记（PR #34 review）', (t_) => {
   t_.after(() => setLang('zh'));
-  const path = '/tmp/A\u2063B.md';
-  const cfg = `配置文件 ${path} 读取失败：x`;
+  // 单独的标记、标记 +「、」、两个标记：普通插值没经过 joinList 转义，一律原样（yuiboard#1 review）
+  const paths = ['/tmp/A\u2063B.md', '/tmp/A\u2063、B.md', '/tmp/A\u2063\u2063B.md'];
   // 文档名正好含分隔符序列（新旧两种写法），经 joinList 转义后仍是两个候选
   const docs = ['al\u2063、pha', 'be、\u2063ta', 'gamma'].map((docId) => ({ docId, archived: false, ...parseTasksDoc('- [ ] 1 one\n', docId) }));
   const pr = { number: 7, title: 'Task 1', body: '', url: '', state: 'OPEN', isDraft: false, baseRefName: 'main', headRefName: 'b7', labels: [],
@@ -140,7 +140,7 @@ test('i18n：用户原文里的 U+2063 不被当成列表标记（PR #34 review�
   const detail = computeBoard(docs, [pr], [], [], {}, { id: 'demo' }, '2026-09-26T00:00:00.000Z').conflicts.find((c) => c.type === 'h').detail;
   for (const l of ['zh', 'ja', 'en']) {
     setLang(l);
-    assert.ok(tx(cfg).includes(path), `${l}: ${tx(cfg)}`);
+    for (const p of paths) assert.ok(tx(`配置文件 ${p} 读取失败：x`).includes(p), `${l}: ${tx(`配置文件 ${p} 读取失败：x`)}`);
     assert.ok(tx(detail).includes('al\u2063、pha#1') && tx(detail).includes('be、\u2063ta#1'), `${l}: ${tx(detail)}`);
   }
   assert.ok(tx(detail).endsWith('al\u2063、pha#1, be、\u2063ta#1, gamma#1'), tx(detail));

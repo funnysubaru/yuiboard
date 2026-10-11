@@ -106,8 +106,8 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function templates(l) {
   if (compiled.has(l)) return compiled.get(l);
-  // 长模板先试：免得「{0}」开头的短模板吃掉整句。
-  const list = Object.keys(SERVER[l]).filter((k) => /\{\d+\}/.test(k)).sort((a, b) => b.length - a.length).map((key) => {
+  // 长模板先试：免得「{0}」开头的短模板吃掉整句。各语言词典的键相同，zh 借 en 的键（只为找出列表位置）。
+  const list = Object.keys(SERVER[l] ?? SERVER.en).filter((k) => /\{\d+\}/.test(k)).sort((a, b) => b.length - a.length).map((key) => {
     const order = [];
     const re = new RegExp(`^${key.split(/\{(\d+)\}/).map((p, i) => (i % 2 ? (order.push(Number(p)), '([\\s\\S]*?)') : esc(p))).join('')}$`);
     return { key, re, order };
@@ -118,19 +118,20 @@ function templates(l) {
 }
 
 // 与 src/msg.mjs 的 LIST_MARK 相同：标记 +「、」是列表分隔符，两个标记是列表项原文里的一个 U+2063。
-// 只认这两种组合；单独的 U+2063（没进 joinList 的用户原文，如路径）原样保留。
+// 只在 SLOTS 登记为 'list' 的插值里解码（zh 也按模板找）：路径等普通插值没经过 joinList 转义，里面的标记组合原样保留。
+// 对不上模板的句子分不清列表在哪，只能整句解码。
 const MARK = '\u2063';
 const unmark = (s, sep = '、') => s.replace(/\u2063([\u2063、])/g, (_, c) => (c === MARK ? MARK : sep));
 
-/** 翻译服务端生成的中文句子（页面当前语言）；zh 只去掉列表标记。 */
+/** 翻译服务端生成的中文句子（页面当前语言）；zh 只还原列表分隔符。 */
 export const tx = (s) => txIn(lang, s);
 
 /** 同 tx，但指定语言：服务端日志与 devboard-ctl 输出用（src/say.mjs）。 */
 export function txIn(l, s) {
   if (typeof s !== 'string') return s;
-  if (l === 'zh' || !SERVER[l] || !/[　-鿿]/.test(s)) return unmark(s);
   const dict = SERVER[l];
-  if (Object.hasOwn(dict, s)) return dict[s];
+  if (!s.includes(MARK) && (!dict || !/[　-鿿]/.test(s))) return s;
+  if (dict && Object.hasOwn(dict, s)) return dict[s];
   const { list, memo } = templates(l);
   if (memo.has(s)) return memo.get(s);
   let out = unmark(s);
@@ -139,7 +140,7 @@ export function txIn(l, s) {
     if (!m) continue;
     const vals = [];
     order.forEach((idx, k) => { vals[idx] = slot(l, SLOTS[key]?.[idx], m[k + 1]); });
-    out = fill(dict[key], vals);
+    out = fill(dict ? dict[key] : key, vals);
     break;
   }
   memo.set(s, out);
@@ -151,7 +152,7 @@ const MORE = /^([\s\S]*) 等 (\d+) 个$/;
 
 function slot(l, kind, v) {
   if (kind === 'msg') return txIn(l, v);
-  if (kind !== 'list') return unmark(v);
+  if (kind !== 'list') return v;
   const sep = (x) => unmark(x, l === 'en' ? ', ' : '、');
   const m = MORE.exec(v);
   return m ? fill(SERVER[l]['{0} 等 {1} 个'], [sep(m[1]), m[2]]) : sep(v);
