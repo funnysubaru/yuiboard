@@ -22,7 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, resolvePath } from '../src/config.mjs';
 import { msg } from '../src/msg.mjs';
-import { say } from '../src/say.mjs';
+import { say, logLang } from '../src/say.mjs';
 
 export const DIR = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -116,7 +116,7 @@ export function renderPlist(template, values) {
 // exec = ExecStart 的其余参数：C 转义，且会做 $ 变量展开 → $ 写成 $$；
 // env = Environment="…"，做 C 转义、不展开 $；path = WorkingDirectory / append: 路径，原样取（不去转义）。
 // path 字段若以反斜杠结尾会被当成续行，模板里让它们不落在行尾（WorkingDirectory={{DIR}}/.）。
-const UNIT_FIELD = { NODE: 'cmd', SERVER: 'exec', PATH: 'env', DIR: 'path', LOG: 'path' };
+const UNIT_FIELD = { NODE: 'cmd', SERVER: 'exec', PATH: 'env', DEVBOARD_LANG: 'env', DIR: 'path', LOG: 'path' };
 const quoteEsc = (v) => v.replace(/[\\"]/g, (c) => `\\${c}`);
 const UNIT_ESC = {
   cmd: (v) => quoteEsc(v.replace(/%/g, '%%')),
@@ -538,6 +538,7 @@ async function must(promise, what) {
  * macOS：本目录的 plist 已加载 → kickstart -k 重启；在但未加载（被 bootout 过）→ bootstrap；
  * 没有 → 按 ops/devboard.plist.template 新建并 bootstrap（created = true；bootstrap 失败时删掉新建的文件再抛错）。
  * 新建的 label 是 com.devboard.agent；该文件已被别的目录的 devboard 占用时加目录哈希后缀，不覆盖。
+ * 新建时把运行 up 的终端的日志语言（logLang()）写成 DEVBOARD_LANG：launchd 没有 LANG，不写日志就默认英文（N26.4）。
  */
 export async function launchdStart(ctx) {
   const domain = `gui/${ctx.uid}`;
@@ -560,7 +561,7 @@ export async function launchdStart(ctx) {
   await mkdir(ctx.agentsDir, { recursive: true });
   await mkdir(ctx.logsDir, { recursive: true });
   await writeFile(file, renderPlist(template, {
-    LABEL: label, NODE: process.execPath, SERVER: ctx.serverEntry, DIR: ctx.dir, PATH,
+    LABEL: label, NODE: process.execPath, SERVER: ctx.serverEntry, DIR: ctx.dir, PATH, DEVBOARD_LANG: logLang(),
     LOG: path.join(ctx.logsDir, 'devboard.log'), ERRLOG: errLog,
   }));
   try {
@@ -584,6 +585,7 @@ export async function launchdCleanup(ctx, { agent, created }) {
  * 没有 → 按 ops/devboard.service.template 在 ~/.config/systemd/user 新建，daemon-reload 后 enable --now（created = true；
  * 失败时删掉新建的文件再抛错）。WantedBy=default.target：登录后自启；要开机即起、不登录也跑，需另行 loginctl enable-linger。
  * 新建的 unit 名是 devboard.service；该文件已被别的目录的 devboard 占用时加目录哈希后缀，不覆盖。日志追加到 cache/devboard.log。
+ * 日志语言同 launchd，新建时写成 DEVBOARD_LANG（N26.4）。
  */
 export async function systemdStart(ctx) {
   const unit = findUnit(await readPlists(ctx.unitsDir, '.service'), ctx.serverEntry);
@@ -603,7 +605,7 @@ export async function systemdStart(ctx) {
   const template = await readFile(path.join(ctx.dir, 'ops', 'devboard.service.template'), 'utf8');
   await mkdir(ctx.unitsDir, { recursive: true });
   await mkdir(path.dirname(ctx.logFile), { recursive: true });
-  await writeFile(file, renderUnit(template, { NODE: ctx.execPath, SERVER: ctx.serverEntry, DIR: ctx.dir, PATH, LOG: ctx.logFile }));
+  await writeFile(file, renderUnit(template, { NODE: ctx.execPath, SERVER: ctx.serverEntry, DIR: ctx.dir, PATH, DEVBOARD_LANG: logLang(), LOG: ctx.logFile }));
   const agent = { file, label: `${name}.service`, errLog: ctx.logFile };
   try {
     await must(ctx.sh('systemctl', ['--user', 'daemon-reload']), 'systemctl daemon-reload');

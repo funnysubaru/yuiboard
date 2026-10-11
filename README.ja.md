@@ -50,7 +50,7 @@ node src/server.mjs --config /path/to/devboard.config.json
 ```
 
 - ポートが使用中ならエラーで終了します。設定の誤りは該当プロジェクトにしか影響しません。そのプロジェクトには問題の項目を示すエラーページが表示され、他のプロジェクトはそのまま動きます。
-- サーバーのログと `devboard-ctl` の出力は既定で英語です。`DEVBOARD_LANG=ja`（または `zh`）を設定するか、日本語 / 中国語の `LANG` で実行すると切り替わります。
+- サーバーのログと `devboard-ctl` の出力は既定で英語です。`DEVBOARD_LANG=ja`（または `zh`）を設定するか、日本語 / 中国語の `LANG` で実行すると切り替わります。`devboard-ctl up` が LaunchAgent / systemd サービスを新規作成するときは、実行したターミナルの言語を `DEVBOARD_LANG` として書き込みます（常駐サービスには通常 `LANG` がないため）。
 - キャッシュは `cache/<プロジェクト id>/`、手動リンクは `data/<プロジェクト id>/` に保存され、どちらも git の管理対象外です。`cache/` を消しても次回の起動が遅くなるだけです。
 - ドキュメントと PR タイトルは [CONVENTION.ja.md](CONVENTION.ja.md) の書き方に従ってください。既存の `tasks.md` の多くはそのままで使えます。
 

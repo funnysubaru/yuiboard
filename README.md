@@ -50,7 +50,7 @@ node src/server.mjs --config /path/to/devboard.config.json
 ```
 
 - If the port is taken, the server exits with an error. A config mistake affects only the project it belongs to: that project shows an error page naming the exact field, and the other projects keep working.
-- Server logs and `devboard-ctl` output are in English by default. Set `DEVBOARD_LANG=zh` or `ja` (or run with a Chinese or Japanese `LANG`) to switch.
+- Server logs and `devboard-ctl` output are in English by default. Set `DEVBOARD_LANG=zh` or `ja` (or run with a Chinese or Japanese `LANG`) to switch. When `devboard-ctl up` creates the LaunchAgent or systemd service, it saves the language of the terminal you ran it from as `DEVBOARD_LANG`, because services usually start without `LANG`.
 - Caches go to `cache/<project id>/` and manual links to `data/<project id>/`; both are git-ignored. Deleting `cache/` only makes the next start slower.
 - Write your docs and PR titles the way [CONVENTION.md](CONVENTION.md) describes. Most existing `tasks.md` files already work as they are.
 

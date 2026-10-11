@@ -141,7 +141,7 @@ test('isFree / isDevboard：被普通程序占用 → 不空闲也不是 devboar
 
 test('renderPlist：占位符全部替换、值做 XML 转义、带空格与中文的路径原样保留；缺值报错', async () => {
   const template = await readFile(TEMPLATE, 'utf8');
-  const values = { LABEL: 'com.devboard.agent', NODE: '/opt/node 24/bin/node', SERVER: '/Users/x/My Projects/dev&board/src/server.mjs', DIR: '/Users/x/My Projects/dev&board', PATH: '/usr/bin:/bin', LOG: '/Users/x/Library/Logs/devboard.log', ERRLOG: '/Users/x/Library/Logs/devboard.error.log' };
+  const values = { LABEL: 'com.devboard.agent', NODE: '/opt/node 24/bin/node', SERVER: '/Users/x/My Projects/dev&board/src/server.mjs', DIR: '/Users/x/My Projects/dev&board', PATH: '/usr/bin:/bin', DEVBOARD_LANG: 'zh', LOG: '/Users/x/Library/Logs/devboard.log', ERRLOG: '/Users/x/Library/Logs/devboard.error.log' };
   const xml = renderPlist(template, values);
   assert.doesNotMatch(xml, /\{\{\w+\}\}/);
   assert.match(xml, /<string>\/Users\/x\/My Projects\/dev&amp;board\/src\/server\.mjs<\/string>/);
@@ -151,7 +151,7 @@ test('renderPlist：占位符全部替换、值做 XML 转义、带空格与中�
 
 test('findAgent：按 ProgramArguments 里的 server 路径找 plist，带出 label 与错误日志路径', async () => {
   const template = await readFile(TEMPLATE, 'utf8');
-  const mk = (label, server) => renderPlist(template, { LABEL: label, NODE: '/n', SERVER: server, DIR: path.dirname(path.dirname(server)), PATH: '/usr/bin', LOG: '/l', ERRLOG: `/e-${label}` });
+  const mk = (label, server) => renderPlist(template, { LABEL: label, NODE: '/n', SERVER: server, DIR: path.dirname(path.dirname(server)), PATH: '/usr/bin', DEVBOARD_LANG: 'zh', LOG: '/l', ERRLOG: `/e-${label}` });
   const plists = [
     { file: '/LA/a.plist', text: mk('com.other', '/elsewhere/src/server.mjs') },
     { file: '/LA/b.plist', text: mk('com.example.devboard', '/Users/x/dev & board/src/server.mjs') },
@@ -398,6 +398,14 @@ function fakeSh(codes = {}) {
   fn.calls = calls;
   return fn;
 }
+// 只在本用例里换掉语言相关的环境变量，结束后还原
+function withLangEnv(t, env) {
+  const keys = ['DEVBOARD_LANG', 'LC_ALL', 'LC_MESSAGES', 'LANG'];
+  const saved = keys.map((k) => process.env[k]);
+  t.after(() => keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i]))));
+  for (const k of keys) delete process.env[k];
+  Object.assign(process.env, env);
+}
 async function launchdCtx(codes) {
   const dir = await tmpDir();
   await cp(path.join(ROOT, 'ops'), path.join(dir, 'ops'), { recursive: true });
@@ -407,7 +415,7 @@ async function launchdCtx(codes) {
 }
 async function putAgent(ctx, label, serverEntry = ctx.serverEntry) {
   await mkdir(ctx.agentsDir, { recursive: true });
-  const text = renderPlist(await readFile(TEMPLATE, 'utf8'), { LABEL: label, NODE: '/n', SERVER: serverEntry, DIR: ctx.dir, PATH: '/usr/bin', LOG: '/l', ERRLOG: '/e' });
+  const text = renderPlist(await readFile(TEMPLATE, 'utf8'), { LABEL: label, NODE: '/n', SERVER: serverEntry, DIR: ctx.dir, PATH: '/usr/bin', DEVBOARD_LANG: 'zh', LOG: '/l', ERRLOG: '/e' });
   await writeFile(path.join(ctx.agentsDir, `${label}.plist`), text);
 }
 
@@ -431,7 +439,8 @@ test('launchd：plist 在但已 bootout（未加载）→ bootstrap 恢复', asy
   assert.equal((await whoManages(ctx)).kind, 'unmanaged', '未加载、也没有 pidfile');
 });
 
-test('launchd：没有本目录的 plist → 按模板新建 com.devboard.agent 并 bootstrap；别的目录的同名 plist 不覆盖', async () => {
+test('launchd：没有本目录的 plist → 按模板新建 com.devboard.agent 并 bootstrap；别的目录的同名 plist 不覆盖；终端的日志语言写进 DEVBOARD_LANG', async (t) => {
+  withLangEnv(t, { LANG: 'ja_JP.UTF-8' });
   const { ctx, fake } = await launchdCtx({ 'launchctl print': 113 });
   await putAgent(ctx, 'com.devboard.agent', '/another/devboard/src/server.mjs');
   const before = readFileSync(path.join(ctx.agentsDir, 'com.devboard.agent.plist'), 'utf8');
@@ -441,6 +450,7 @@ test('launchd：没有本目录的 plist → 按模板新建 com.devboard.agent 
   const text = readFileSync(r.agent.file, 'utf8');
   assert.ok(text.includes(`<string>${ctx.serverEntry}</string>`));
   assert.ok(text.includes(`<string>${process.execPath}</string>`));
+  assert.ok(text.includes('<key>DEVBOARD_LANG</key>\n\t\t<string>ja</string>'), 'launchd 没有 LANG：按运行 up 的终端写死日志语言（N26.4）');
   assert.equal(r.agent.errLog, path.join(ctx.logsDir, 'devboard.error.log'));
   assert.equal(readFileSync(path.join(ctx.agentsDir, 'com.devboard.agent.plist'), 'utf8'), before, '别的目录的 plist 原样保留');
   assert.ok(fake.calls.includes(`launchctl bootstrap gui/501 ${r.agent.file}`));
@@ -855,7 +865,7 @@ async function systemdCtx(codes) {
 }
 async function putUnit(ctx, name, serverEntry = ctx.serverEntry) {
   await mkdir(ctx.unitsDir, { recursive: true });
-  const text = renderUnit(await readFile(UNIT_TEMPLATE, 'utf8'), { NODE: '/n', SERVER: serverEntry, DIR: ctx.dir, PATH: '/usr/bin', LOG: '/l' });
+  const text = renderUnit(await readFile(UNIT_TEMPLATE, 'utf8'), { NODE: '/n', SERVER: serverEntry, DIR: ctx.dir, PATH: '/usr/bin', DEVBOARD_LANG: 'zh', LOG: '/l' });
   await writeFile(path.join(ctx.unitsDir, name), text);
 }
 
@@ -865,7 +875,7 @@ test('renderUnit / findUnit：按字段转义——ExecStart 转义引号 / 反�
   const dir = '/home/x/My 100% "dev"\\board ${UNSET}/看板';
   const server = `${dir}/src/server.mjs`;
   const log = `${dir}/cache/devboard.log`;
-  const text = renderUnit(tpl, { NODE: '/opt/node$24/bin/node', SERVER: server, DIR: dir, PATH: '/usr/bin:/a "b"', LOG: log });
+  const text = renderUnit(tpl, { NODE: '/opt/node$24/bin/node', SERVER: server, DIR: dir, PATH: '/usr/bin:/a "b"', DEVBOARD_LANG: 'zh', LOG: log });
   // 可执行文件路径在变量展开前就被查找：$ 原样保留；入口参数会展开变量：$ 写成 $$
   assert.match(text, /^ExecStart="\/opt\/node\$24\/bin\/node" "\/home\/x\/My 100%% \\"dev\\"\\\\board \$\$\{UNSET\}\/看板\/src\/server\.mjs"$/m);
   assert.ok(text.includes('\nWorkingDirectory=/home/x/My 100%% "dev"\\board ${UNSET}/看板/.\n'), 'WorkingDirectory 不去转义，只写 %%');
@@ -874,8 +884,8 @@ test('renderUnit / findUnit：按字段转义——ExecStart 转义引号 / 反�
   assert.deepEqual(findUnit([{ file: '/u/devboard.service', text }], server), { file: '/u/devboard.service', label: 'devboard.service', errLog: log });
   assert.equal(findUnit([{ file: '/u/devboard.service', text }], '/home/x/My'), null, '只认完整参数');
   // 目录以反斜杠结尾：WorkingDirectory 行不能以反斜杠结尾（否则续行吞掉下一行 Environment）
-  const tail = renderUnit(tpl, { NODE: '/n', SERVER: '/home/x/board\\/src/server.mjs', DIR: '/home/x/board\\', PATH: '/usr/bin', LOG: '/l' });
-  assert.ok(tail.includes('\nWorkingDirectory=/home/x/board\\/.\nEnvironment="PATH=/usr/bin"\n'));
+  const tail = renderUnit(tpl, { NODE: '/n', SERVER: '/home/x/board\\/src/server.mjs', DIR: '/home/x/board\\', PATH: '/usr/bin', DEVBOARD_LANG: 'zh', LOG: '/l' });
+  assert.ok(tail.includes('\nWorkingDirectory=/home/x/board\\/.\nEnvironment="PATH=/usr/bin"\nEnvironment="DEVBOARD_LANG=zh"\n'));
   assert.ok(!/\\$/m.test(tail), '没有以反斜杠结尾的行');
   assert.throws(() => renderUnit(tpl, { NODE: '/n' }), /缺少值/);
   assert.throws(() => renderUnit(tpl, { NODE: '/n\nExecStartPre=/bin/rm', SERVER: '/s', DIR: '/d', PATH: '/p', LOG: '/l' }), /换行/);
@@ -901,7 +911,8 @@ test('systemd：unit 在但没在跑 → enable --now 恢复；whoManages 为 un
   assert.equal((await whoManages(ctx)).kind, 'unmanaged');
 });
 
-test('systemd：没有本目录的 unit → 按模板新建（别的目录占了 devboard.service 就加哈希后缀）、daemon-reload、enable --now；失败清理只删本次新建的', async () => {
+test('systemd：没有本目录的 unit → 按模板新建（别的目录占了 devboard.service 就加哈希后缀）、daemon-reload、enable --now；失败清理只删本次新建的；DEVBOARD_LANG 照写', async (t) => {
+  withLangEnv(t, { DEVBOARD_LANG: 'zh' });
   const { ctx, fake } = await systemdCtx({ 'systemctl --user is-active': 3 });
   await putUnit(ctx, 'devboard.service', '/another/devboard/src/server.mjs');
   const before = readFileSync(path.join(ctx.unitsDir, 'devboard.service'), 'utf8');
@@ -911,6 +922,7 @@ test('systemd：没有本目录的 unit → 按模板新建（别的目录占了
   const text = readFileSync(r.agent.file, 'utf8');
   assert.ok(text.includes(`"${ctx.serverEntry}"`));
   assert.ok(text.includes(`WorkingDirectory=${ctx.dir}`));
+  assert.ok(text.includes('\nEnvironment="DEVBOARD_LANG=zh"\n'));
   assert.equal(r.agent.errLog, ctx.logFile);
   assert.equal(readFileSync(path.join(ctx.unitsDir, 'devboard.service'), 'utf8'), before, '别的目录的 unit 原样保留');
   assert.deepEqual(fake.calls.filter((c) => c.startsWith('systemctl')).slice(-2), ['systemctl --user daemon-reload', `systemctl --user enable --now ${r.agent.label}`]);

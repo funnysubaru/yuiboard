@@ -50,7 +50,7 @@ node src/server.mjs --config /path/to/devboard.config.json
 ```
 
 - 端口被占用会直接报错退出。配置写错只影响所在的项目：该项目显示错误页并写明是哪一项，其它项目照常工作。
-- 服务端日志与 `devboard-ctl` 的输出默认是英文；设 `DEVBOARD_LANG=zh`（或 `ja`），或在中文 / 日文 `LANG` 下运行即可切换。
+- 服务端日志与 `devboard-ctl` 的输出默认是英文；设 `DEVBOARD_LANG=zh`（或 `ja`），或在中文 / 日文 `LANG` 下运行即可切换。`devboard-ctl up` 新建 LaunchAgent / systemd 服务时，会把运行它的终端的语言写成 `DEVBOARD_LANG`，因为后台服务通常没有 `LANG`。
 - 缓存写在 `cache/<项目 id>/`，手动关联记录写在 `data/<项目 id>/`，都已被 git 忽略。删掉 `cache/` 只会让下次启动慢一些。
 - 文档与 PR 标题按 [CONVENTION.zh-CN.md](CONVENTION.zh-CN.md) 的写法来写。现有的 `tasks.md` 大多不用改就能用。
 
