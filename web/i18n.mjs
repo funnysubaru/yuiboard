@@ -155,5 +155,6 @@ function slot(l, kind, v) {
   if (kind !== 'list') return v;
   const sep = (x) => unmark(x, l === 'en' ? ', ' : '、');
   const m = MORE.exec(v);
-  return m ? fill(SERVER[l]['{0} 等 {1} 个'], [sep(m[1]), m[2]]) : sep(v);
+  // zh 没有词典，「等 N 个」用中文原模板
+  return m ? fill(SERVER[l]?.['{0} 等 {1} 个'] ?? '{0} 等 {1} 个', [sep(m[1]), m[2]]) : sep(v);
 }
