@@ -21,7 +21,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
   - Fixtures use fictional data only.
 - **CI**: `.github/workflows/ci.yml` runs `test-linux` / `test-macos` on every PR, drafts included, and on pushes to `main`. The Node version comes from `package.json`.
 - **Read-only.** YUIBoard never writes to watched repositories, `~/.claude`, `~/.codex` or GitHub.
-  - git runs only the allow-listed read-only commands in `GIT_ALLOWED` (`src/docs.mjs`), with `GIT_OPTIONAL_LOCKS=0`.
+  - git runs only the allow-listed read-only commands in `GIT_ALLOWED` (`src/docs.mjs`), with `GIT_OPTIONAL_LOCKS=0` and without inherited `GIT_*` variables (`gitEnv()` in `src/config.mjs`; otherwise `GIT_DIR` and friends override `-C`).
   - GitHub is read only through `gh api graphql`, and YUIBoard holds no token.
   - Only `src/store.mjs` writes to disk, and only to `cache/` and `data/`.
   - The exception is `ops/devboard-ctl.mjs`, which also writes:
@@ -39,6 +39,8 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
   - User content is never translated: task titles, paths, PR titles, session text. Interpolated values stay as they are, except sub-clauses and reference lists that the server itself builds. Those are translated only once registered in `SLOTS` in `web/i18n.mjs`.
   - Japanese and English translations live in `web/i18n-ja.mjs` and `web/i18n-en.mjs`. `test/i18n.test.mjs` statically checks for unwrapped text, missing or extra keys and placeholder mismatches.
   - Write each sentence as one template; don't glue sentences together from fragments.
+  - Lists the server builds into a sentence use `joinList()` (`src/msg.mjs`). The separator is an invisible U+2063 followed by '、', shown as ', ' in English; a '、' inside an item stays as it is, and U+2063 inside an item is escaped.
+  - Server log lines and `devboard-ctl` messages are `` msg`…` `` templates too, printed through `say()` (`src/say.mjs`). The language comes from `DEVBOARD_LANG`, then `LC_ALL` / `LC_MESSAGES` / `LANG`, defaulting to English. `devboard-ctl` translates only when it prints its JSON; function return values and machine fields such as `reason` stay as they are.
 - **Comments.** Most existing comments are in Chinese. New comments may be in English or Chinese. Explain intent and non-obvious edge cases. References like `design §3.8`, `需求 3.1` or `任务 6.7` point to the original internal spec, which isn't published; treat them as historical anchors. Mark a deliberate shortcut with a `ponytail:` comment that names its limit and how to upgrade it.
 
 ## Product rules (don't break these)
@@ -80,6 +82,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
 
 - `node src/server.mjs` reads `devboard.config.json` (copy it from `devboard.config.example.json`; it's git-ignored) and serves http://127.0.0.1:4317 by default. If the port is taken, an instance is probably already running.
 - After changing `src/` or the config, restart. After changing only `web/`, a hard refresh is enough.
+- `npm run demo` (`ops/demo.mjs`) builds a fictional project (git repo, docs, PRs replayed by `fake-gh`, a Claude Code session) in a `yuiboard-demo-*` system temp directory and serves it in-process from port 4318 up; cache and data live there too. Ctrl+C stops it and deletes the directory. `test/demo.test.mjs` checks the demo states with a fixed "now".
 - Docs, sessions and manual links refresh every 5 s; GitHub every `githubRefreshMinutes` (default 5, minimum 2). YUIBoard never calls an AI API.
 - For checks that write data or simulate failures (manual links, going offline), copy the whole directory and run it on another port. Never touch the user's running instance or its `data/`.
 

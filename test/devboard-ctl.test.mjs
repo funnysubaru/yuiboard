@@ -13,8 +13,9 @@ import { check, findProject, pickPort, isFree, isDevboard, renderPlist, findAgen
 const CTL = fileURLToPath(new URL('../ops/devboard-ctl.mjs', import.meta.url));
 const TEMPLATE = fileURLToPath(new URL('../ops/devboard.plist.template', import.meta.url));
 const tmpDir = async () => realpathSync(await mkdtemp(path.join(os.tmpdir(), 'devboard-ctl-')));
-const runCtl = (args) => new Promise((resolve) => {
-  execFile(process.execPath, [CTL, ...args], (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim().split('\n').at(-1)) }));
+// 命令行输出的说明按 DEVBOARD_LANG 翻译（N26.1）；默认用中文跑，与函数返回值（中文原文）直接比较。
+const runCtl = (args, lang = 'zh') => new Promise((resolve) => {
+  execFile(process.execPath, [CTL, ...args], { env: { ...process.env, DEVBOARD_LANG: lang } }, (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim().split('\n').at(-1)) }));
 });
 async function gitRepo(dir) {
   await mkdir(dir, { recursive: true });
@@ -43,6 +44,22 @@ test('用法错误：退出 1 并给出用法', async () => {
   const r = await runCtl(['nope']);
   assert.equal(r.code, 1);
   assert.match(r.out.error, /用法：devboard-ctl/);
+});
+
+test('命令行输出跟 DEVBOARD_LANG：英文 / 日文的用法与配置错误说明，reason 等机器字段不变（N26.1）', async () => {
+  const en = await runCtl(['nope'], 'en');
+  assert.equal(en.code, 1);
+  assert.match(en.out.error, /^Usage: devboard-ctl check \[config path\]/);
+  const ja = await runCtl(['nope'], 'ja');
+  assert.match(ja.out.error, /^使い方：devboard-ctl/);
+  const dir = await tmpDir();
+  const bad = path.join(dir, 'bad.json');
+  await writeFile(bad, '{ "projects": [ x ] }');
+  const zh = await runCtl(['check', bad]);
+  const b = await runCtl(['check', bad], 'en');
+  assert.equal(b.out.errors[0].projectId, null);
+  assert.notEqual(b.out.errors[0].message, zh.out.errors[0].message, '说明已翻译');
+  assert.doesNotMatch(b.out.errors[0].message, /[\u4e00-\u9fff]{4}/, `英文说明里不剩成段中文：${b.out.errors[0].message}`);
 });
 
 test('findProject：~/、相对路径、尾斜杠、软链、NFD 都认作同一仓库；其它仓库为 null', async () => {
@@ -124,7 +141,7 @@ test('isFree / isDevboard：被普通程序占用 → 不空闲也不是 devboar
 
 test('renderPlist：占位符全部替换、值做 XML 转义、带空格与中文的路径原样保留；缺值报错', async () => {
   const template = await readFile(TEMPLATE, 'utf8');
-  const values = { LABEL: 'com.devboard.agent', NODE: '/opt/node 24/bin/node', SERVER: '/Users/x/My Projects/dev&board/src/server.mjs', DIR: '/Users/x/My Projects/dev&board', PATH: '/usr/bin:/bin', LOG: '/Users/x/Library/Logs/devboard.log', ERRLOG: '/Users/x/Library/Logs/devboard.error.log' };
+  const values = { LABEL: 'com.devboard.agent', NODE: '/opt/node 24/bin/node', SERVER: '/Users/x/My Projects/dev&board/src/server.mjs', DIR: '/Users/x/My Projects/dev&board', PATH: '/usr/bin:/bin', DEVBOARD_LANG: 'zh', LOG: '/Users/x/Library/Logs/devboard.log', ERRLOG: '/Users/x/Library/Logs/devboard.error.log' };
   const xml = renderPlist(template, values);
   assert.doesNotMatch(xml, /\{\{\w+\}\}/);
   assert.match(xml, /<string>\/Users\/x\/My Projects\/dev&amp;board\/src\/server\.mjs<\/string>/);
@@ -134,7 +151,7 @@ test('renderPlist：占位符全部替换、值做 XML 转义、带空格与中�
 
 test('findAgent：按 ProgramArguments 里的 server 路径找 plist，带出 label 与错误日志路径', async () => {
   const template = await readFile(TEMPLATE, 'utf8');
-  const mk = (label, server) => renderPlist(template, { LABEL: label, NODE: '/n', SERVER: server, DIR: path.dirname(path.dirname(server)), PATH: '/usr/bin', LOG: '/l', ERRLOG: `/e-${label}` });
+  const mk = (label, server) => renderPlist(template, { LABEL: label, NODE: '/n', SERVER: server, DIR: path.dirname(path.dirname(server)), PATH: '/usr/bin', DEVBOARD_LANG: 'zh', LOG: '/l', ERRLOG: `/e-${label}` });
   const plists = [
     { file: '/LA/a.plist', text: mk('com.other', '/elsewhere/src/server.mjs') },
     { file: '/LA/b.plist', text: mk('com.example.devboard', '/Users/x/dev & board/src/server.mjs') },
@@ -381,6 +398,14 @@ function fakeSh(codes = {}) {
   fn.calls = calls;
   return fn;
 }
+// 只在本用例里换掉语言相关的环境变量，结束后还原
+function withLangEnv(t, env) {
+  const keys = ['DEVBOARD_LANG', 'LC_ALL', 'LC_MESSAGES', 'LANG'];
+  const saved = keys.map((k) => process.env[k]);
+  t.after(() => keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i]))));
+  for (const k of keys) delete process.env[k];
+  Object.assign(process.env, env);
+}
 async function launchdCtx(codes) {
   const dir = await tmpDir();
   await cp(path.join(ROOT, 'ops'), path.join(dir, 'ops'), { recursive: true });
@@ -390,7 +415,7 @@ async function launchdCtx(codes) {
 }
 async function putAgent(ctx, label, serverEntry = ctx.serverEntry) {
   await mkdir(ctx.agentsDir, { recursive: true });
-  const text = renderPlist(await readFile(TEMPLATE, 'utf8'), { LABEL: label, NODE: '/n', SERVER: serverEntry, DIR: ctx.dir, PATH: '/usr/bin', LOG: '/l', ERRLOG: '/e' });
+  const text = renderPlist(await readFile(TEMPLATE, 'utf8'), { LABEL: label, NODE: '/n', SERVER: serverEntry, DIR: ctx.dir, PATH: '/usr/bin', DEVBOARD_LANG: 'zh', LOG: '/l', ERRLOG: '/e' });
   await writeFile(path.join(ctx.agentsDir, `${label}.plist`), text);
 }
 
@@ -414,7 +439,8 @@ test('launchd：plist 在但已 bootout（未加载）→ bootstrap 恢复', asy
   assert.equal((await whoManages(ctx)).kind, 'unmanaged', '未加载、也没有 pidfile');
 });
 
-test('launchd：没有本目录的 plist → 按模板新建 com.devboard.agent 并 bootstrap；别的目录的同名 plist 不覆盖', async () => {
+test('launchd：没有本目录的 plist → 按模板新建 com.devboard.agent 并 bootstrap；别的目录的同名 plist 不覆盖；终端的日志语言写进 DEVBOARD_LANG', async (t) => {
+  withLangEnv(t, { LANG: 'ja_JP.UTF-8' });
   const { ctx, fake } = await launchdCtx({ 'launchctl print': 113 });
   await putAgent(ctx, 'com.devboard.agent', '/another/devboard/src/server.mjs');
   const before = readFileSync(path.join(ctx.agentsDir, 'com.devboard.agent.plist'), 'utf8');
@@ -424,6 +450,7 @@ test('launchd：没有本目录的 plist → 按模板新建 com.devboard.agent 
   const text = readFileSync(r.agent.file, 'utf8');
   assert.ok(text.includes(`<string>${ctx.serverEntry}</string>`));
   assert.ok(text.includes(`<string>${process.execPath}</string>`));
+  assert.ok(text.includes('<key>DEVBOARD_LANG</key>\n\t\t<string>ja</string>'), 'launchd 没有 LANG：按运行 up 的终端写死日志语言（N26.4）');
   assert.equal(r.agent.errLog, path.join(ctx.logsDir, 'devboard.error.log'));
   assert.equal(readFileSync(path.join(ctx.agentsDir, 'com.devboard.agent.plist'), 'utf8'), before, '别的目录的 plist 原样保留');
   assert.ok(fake.calls.includes(`launchctl bootstrap gui/501 ${r.agent.file}`));
@@ -453,7 +480,7 @@ test('CLI：入口路径经符号链接也能识别为直接运行（不会 exit
   execFileSync('ln', ['-s', ROOT, link]);
   const linkedCtl = path.join(link, 'ops', 'devboard-ctl.mjs');
   const r = await new Promise((resolve) => {
-    execFile(process.execPath, [linkedCtl, 'bogus'], (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim().split('\n').at(-1)) }));
+    execFile(process.execPath, [linkedCtl, 'bogus'], { env: { ...process.env, DEVBOARD_LANG: 'zh' } }, (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim().split('\n').at(-1)) }));
   });
   assert.equal(r.code, 1);
   assert.match(r.out.error, /用法：devboard-ctl/);
@@ -595,6 +622,22 @@ test('save：目标项目 check 不过 → 恢复 .bak，文件逐字节还原�
   const ok = await saveUpdate(s.file, 'demo', { name: '演示' });
   assert.equal(ok.ok, true, JSON.stringify(ok));
   assert.ok(ok.otherErrors.some((e) => e.projectId === 'broken'));
+});
+
+test('CLI：保存成功时别的项目原有的错误（otherErrors）也按 DEVBOARD_LANG 翻译，机器字段不变（PR #35 review）', async (t) => {
+  const s = await saveSpace();
+  const dir = await ctlSpace(t, { projects: [{ id: 'broken' }] });
+  const cli = path.join(dir, 'ops', 'devboard-ctl.mjs');
+  const run = (lang, id) => new Promise((resolve) => {
+    const child = execFile(process.execPath, [cli, 'save', '--new'], { env: { ...process.env, DEVBOARD_LANG: lang } }, (e, stdout) => resolve({ code: e ? e.code : 0, out: JSON.parse(stdout.trim()) }));
+    child.stdin.end(JSON.stringify(newProj(id, id === 'en' ? s.repo : s.other)));
+  });
+  for (const lang of ['en', 'ja']) {
+    const r = await run(lang, lang);
+    assert.equal(r.code, 0, JSON.stringify(r.out));
+    assert.ok(r.out.otherErrors.length > 0 && r.out.otherErrors.every((e) => e.projectId === 'broken'), JSON.stringify(r.out.otherErrors));
+    for (const e of r.out.otherErrors) assert.doesNotMatch(e.message, lang === 'en' ? /[\u4e00-\u9fff]/ : /项目|缺少|至少需要/, `${lang}: ${e.message}`);
+  }
 });
 
 test('remove：删掉该项目、其它原样；id 不存在 → not-found 且文件不动', async () => {
@@ -822,7 +865,7 @@ async function systemdCtx(codes) {
 }
 async function putUnit(ctx, name, serverEntry = ctx.serverEntry) {
   await mkdir(ctx.unitsDir, { recursive: true });
-  const text = renderUnit(await readFile(UNIT_TEMPLATE, 'utf8'), { NODE: '/n', SERVER: serverEntry, DIR: ctx.dir, PATH: '/usr/bin', LOG: '/l' });
+  const text = renderUnit(await readFile(UNIT_TEMPLATE, 'utf8'), { NODE: '/n', SERVER: serverEntry, DIR: ctx.dir, PATH: '/usr/bin', DEVBOARD_LANG: 'zh', LOG: '/l' });
   await writeFile(path.join(ctx.unitsDir, name), text);
 }
 
@@ -832,7 +875,7 @@ test('renderUnit / findUnit：按字段转义——ExecStart 转义引号 / 反�
   const dir = '/home/x/My 100% "dev"\\board ${UNSET}/看板';
   const server = `${dir}/src/server.mjs`;
   const log = `${dir}/cache/devboard.log`;
-  const text = renderUnit(tpl, { NODE: '/opt/node$24/bin/node', SERVER: server, DIR: dir, PATH: '/usr/bin:/a "b"', LOG: log });
+  const text = renderUnit(tpl, { NODE: '/opt/node$24/bin/node', SERVER: server, DIR: dir, PATH: '/usr/bin:/a "b"', DEVBOARD_LANG: 'zh', LOG: log });
   // 可执行文件路径在变量展开前就被查找：$ 原样保留；入口参数会展开变量：$ 写成 $$
   assert.match(text, /^ExecStart="\/opt\/node\$24\/bin\/node" "\/home\/x\/My 100%% \\"dev\\"\\\\board \$\$\{UNSET\}\/看板\/src\/server\.mjs"$/m);
   assert.ok(text.includes('\nWorkingDirectory=/home/x/My 100%% "dev"\\board ${UNSET}/看板/.\n'), 'WorkingDirectory 不去转义，只写 %%');
@@ -841,8 +884,8 @@ test('renderUnit / findUnit：按字段转义——ExecStart 转义引号 / 反�
   assert.deepEqual(findUnit([{ file: '/u/devboard.service', text }], server), { file: '/u/devboard.service', label: 'devboard.service', errLog: log });
   assert.equal(findUnit([{ file: '/u/devboard.service', text }], '/home/x/My'), null, '只认完整参数');
   // 目录以反斜杠结尾：WorkingDirectory 行不能以反斜杠结尾（否则续行吞掉下一行 Environment）
-  const tail = renderUnit(tpl, { NODE: '/n', SERVER: '/home/x/board\\/src/server.mjs', DIR: '/home/x/board\\', PATH: '/usr/bin', LOG: '/l' });
-  assert.ok(tail.includes('\nWorkingDirectory=/home/x/board\\/.\nEnvironment="PATH=/usr/bin"\n'));
+  const tail = renderUnit(tpl, { NODE: '/n', SERVER: '/home/x/board\\/src/server.mjs', DIR: '/home/x/board\\', PATH: '/usr/bin', DEVBOARD_LANG: 'zh', LOG: '/l' });
+  assert.ok(tail.includes('\nWorkingDirectory=/home/x/board\\/.\nEnvironment="PATH=/usr/bin"\nEnvironment="DEVBOARD_LANG=zh"\n'));
   assert.ok(!/\\$/m.test(tail), '没有以反斜杠结尾的行');
   assert.throws(() => renderUnit(tpl, { NODE: '/n' }), /缺少值/);
   assert.throws(() => renderUnit(tpl, { NODE: '/n\nExecStartPre=/bin/rm', SERVER: '/s', DIR: '/d', PATH: '/p', LOG: '/l' }), /换行/);
@@ -868,7 +911,8 @@ test('systemd：unit 在但没在跑 → enable --now 恢复；whoManages 为 un
   assert.equal((await whoManages(ctx)).kind, 'unmanaged');
 });
 
-test('systemd：没有本目录的 unit → 按模板新建（别的目录占了 devboard.service 就加哈希后缀）、daemon-reload、enable --now；失败清理只删本次新建的', async () => {
+test('systemd：没有本目录的 unit → 按模板新建（别的目录占了 devboard.service 就加哈希后缀）、daemon-reload、enable --now；失败清理只删本次新建的；DEVBOARD_LANG 照写', async (t) => {
+  withLangEnv(t, { DEVBOARD_LANG: 'zh' });
   const { ctx, fake } = await systemdCtx({ 'systemctl --user is-active': 3 });
   await putUnit(ctx, 'devboard.service', '/another/devboard/src/server.mjs');
   const before = readFileSync(path.join(ctx.unitsDir, 'devboard.service'), 'utf8');
@@ -878,6 +922,7 @@ test('systemd：没有本目录的 unit → 按模板新建（别的目录占了
   const text = readFileSync(r.agent.file, 'utf8');
   assert.ok(text.includes(`"${ctx.serverEntry}"`));
   assert.ok(text.includes(`WorkingDirectory=${ctx.dir}`));
+  assert.ok(text.includes('\nEnvironment="DEVBOARD_LANG=zh"\n'));
   assert.equal(r.agent.errLog, ctx.logFile);
   assert.equal(readFileSync(path.join(ctx.unitsDir, 'devboard.service'), 'utf8'), before, '别的目录的 unit 原样保留');
   assert.deepEqual(fake.calls.filter((c) => c.startsWith('systemctl')).slice(-2), ['systemctl --user daemon-reload', `systemctl --user enable --now ${r.agent.label}`]);

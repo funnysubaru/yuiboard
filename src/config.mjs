@@ -169,6 +169,16 @@ export function resolvePath(p, baseDir) {
   return path.resolve(baseDir, expanded).normalize('NFC');
 }
 
+/**
+ * git 子进程用的环境：去掉继承的 GIT_*（GIT_DIR、GIT_WORK_TREE、GIT_INDEX_FILE…会盖过 -C / cwd，
+ * 读到或写到别的仓库，PR #33 review），只读时再关可选锁与交互提示。
+ * @param {Record<string, string>} [extra]
+ */
+export const gitEnv = (extra = { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' }) => ({
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
+  ...extra,
+});
+
 // 返回问题描述，没问题返回 null。只用只读的 rev-parse，并关闭可选锁与交互提示，避免干扰 owner 的 git 操作（需求 16.1）。
 async function checkGitDir(dir) {
   try {
@@ -179,7 +189,7 @@ async function checkGitDir(dir) {
   try {
     await run('git', ['-C', dir, 'rev-parse', '--git-dir'], {
       timeout: 10_000,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+      env: gitEnv(),
     });
     return null;
   } catch (e) {

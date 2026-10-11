@@ -26,9 +26,19 @@ YUIBoard 读取仓库里的规划文档（spec 的 `tasks.md`、ADR、plan、TOD
 
 需要 Node 24.x、git；要看 PR 还需要已登录的 [GitHub CLI](https://cli.github.com/)（`gh auth login`，只读权限即可）。
 
+**先试一下**：用一个虚构项目（文档、PR、AI 会话都是编的）起一份看板，不用写配置，也不用登录 GitHub：
+
 ```sh
 git clone https://github.com/funnysubaru/yuiboard.git
 cd yuiboard
+npm run demo
+```
+
+演示看板从 4318 起找第一个空闲端口，只写系统临时目录，按 Ctrl+C 停止时连同文件一起删掉。
+
+要看自己的仓库：
+
+```sh
 cp devboard.config.example.json devboard.config.json   # 改成指向自己的仓库（见「配置」）
 node src/server.mjs                                     # 或 npm start
 ```
@@ -40,6 +50,7 @@ node src/server.mjs --config /path/to/devboard.config.json
 ```
 
 - 端口被占用会直接报错退出。配置写错只影响所在的项目：该项目显示错误页并写明是哪一项，其它项目照常工作。
+- 服务端日志与 `devboard-ctl` 的输出默认是英文；设 `DEVBOARD_LANG=zh`（或 `ja`），或在中文 / 日文 `LANG` 下运行即可切换。`devboard-ctl up` 新建 LaunchAgent / systemd 服务时，会把运行它的终端的语言写成 `DEVBOARD_LANG`，因为后台服务通常没有 `LANG`。
 - 缓存写在 `cache/<项目 id>/`，手动关联记录写在 `data/<项目 id>/`，都已被 git 忽略。删掉 `cache/` 只会让下次启动慢一些。
 - 文档与 PR 标题按 [CONVENTION.zh-CN.md](CONVENTION.zh-CN.md) 的写法来写。现有的 `tasks.md` 大多不用改就能用。
 
@@ -155,7 +166,7 @@ node ops/devboard-ctl.mjs revert <revision>                # 撤销返回该 rev
 
 ## 只读保证
 
-- **仓库**：只跑白名单里的只读 git 命令（`rev-parse`、`merge-base --is-ancestor`、`for-each-ref`、`log`、`worktree list`），带 `GIT_OPTIONAL_LOCKS=0`。不 fetch、不 checkout、不写 `.git` 与索引，不和你或 AI 的 git 操作抢锁，不改仓库里的任何文件。
+- **仓库**：只跑白名单里的只读 git 命令（`rev-parse`、`merge-base --is-ancestor`、`for-each-ref`、`log`、`worktree list`），带 `GIT_OPTIONAL_LOCKS=0`，并忽略继承的 `GIT_DIR` 等 `GIT_*` 环境变量。不 fetch、不 checkout、不写 `.git` 与索引，不和你或 AI 的 git 操作抢锁，不改仓库里的任何文件。
 - **GitHub**：只经 `gh` 读取。令牌由 `gh` 自己管理，不落进配置、缓存、日志或页面；令牌权限超出只读所需时页面会提示。
 - **AI 会话记录**：只读打开、只读到最后一个完整行，不在会话目录里新建文件。缓存与页面只留元数据和截断摘要，疑似密钥、令牌已遮蔽；不存完整对话，不上传到任何地方。
 - **本服务**：只写本目录的 `cache/` 与 `data/`。页面只接受同源请求，写接口（手动关联、立即刷新）校验 `Origin` 与 `Content-Type`。无遥测。

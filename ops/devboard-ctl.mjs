@@ -21,6 +21,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, resolvePath } from '../src/config.mjs';
+import { msg } from '../src/msg.mjs';
+import { say, logLang } from '../src/say.mjs';
 
 export const DIR = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -72,7 +74,7 @@ export function findProject(config, repoPath, configDir) {
 /** 从 start 起找第一个 isFree(port) 为真的端口；最多试 100 个。 */
 export async function pickPort(start, isFree) {
   for (let p = start; p < start + 100 && p <= 65535; p++) if (await isFree(p)) return p;
-  throw new Error(`从 ${start} 起 100 个端口都被占用`);
+  throw new Error(msg`从 ${start} 起 100 个端口都被占用`);
 }
 
 /** 端口能不能在 127.0.0.1 上绑定。 */
@@ -104,7 +106,7 @@ const unxml = (s) => s.replace(/&(amp|lt|gt|quot|apos);/g, (m, k) => XML_UNESC[k
 /** 按模板填 {{名字}}；值做 XML 转义；模板里有而 values 没给的占位符直接报错，免得写出半成品 plist。 */
 export function renderPlist(template, values) {
   return template.replace(/\{\{(\w+)\}\}/g, (m, k) => {
-    if (values[k] === undefined) throw new Error(`plist 模板缺少值：${k}`);
+    if (values[k] === undefined) throw new Error(msg`plist 模板缺少值：${k}`);
     return String(values[k]).replace(/[&<>"']/g, (c) => XML_ESC[c]);
   });
 }
@@ -114,7 +116,7 @@ export function renderPlist(template, values) {
 // exec = ExecStart 的其余参数：C 转义，且会做 $ 变量展开 → $ 写成 $$；
 // env = Environment="…"，做 C 转义、不展开 $；path = WorkingDirectory / append: 路径，原样取（不去转义）。
 // path 字段若以反斜杠结尾会被当成续行，模板里让它们不落在行尾（WorkingDirectory={{DIR}}/.）。
-const UNIT_FIELD = { NODE: 'cmd', SERVER: 'exec', PATH: 'env', DIR: 'path', LOG: 'path' };
+const UNIT_FIELD = { NODE: 'cmd', SERVER: 'exec', PATH: 'env', DEVBOARD_LANG: 'env', DIR: 'path', LOG: 'path' };
 const quoteEsc = (v) => v.replace(/[\\"]/g, (c) => `\\${c}`);
 const UNIT_ESC = {
   cmd: (v) => quoteEsc(v.replace(/%/g, '%%')),
@@ -129,9 +131,9 @@ const UNIT_ESC = {
  */
 export function renderUnit(template, values) {
   return template.replace(/\{\{(\w+)\}\}/g, (m, k) => {
-    if (values[k] === undefined || !UNIT_FIELD[k]) throw new Error(`unit 模板缺少值：${k}`);
+    if (values[k] === undefined || !UNIT_FIELD[k]) throw new Error(msg`unit 模板缺少值：${k}`);
     const v = String(values[k]);
-    if (/[\r\n]/.test(v)) throw new Error(`unit 模板的值不能含换行：${k}`);
+    if (/[\r\n]/.test(v)) throw new Error(msg`unit 模板的值不能含换行：${k}`);
     return UNIT_ESC[UNIT_FIELD[k]](v);
   });
 }
@@ -254,8 +256,8 @@ export async function withConfigLock(configPath, fn, { waitMs = 10_000 } = {}) {
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
       const holder = Number(await readFile(lock, 'utf8').catch(() => '')); // 刚创建、还没写 PID 时为 0，按占用处理
-      if (holder && !pidAlive(holder)) return { ok: false, reason: 'stale-lock', lock, pid: holder, error: `配置锁 ${lock} 是已退出的进程 ${holder} 留下的；确认没有别的 devboard-ctl 在运行后删掉它再重试` };
-      if (Date.now() > end) return { ok: false, reason: 'config-busy', lock, error: `另一个进程（PID ${holder || '未知'}）正在改配置，${waitMs / 1000} 秒内没等到；稍后重试` };
+      if (holder && !pidAlive(holder)) return { ok: false, reason: 'stale-lock', lock, pid: holder, error: msg`配置锁 ${lock} 是已退出的进程 ${holder} 留下的；确认没有别的 devboard-ctl 在运行后删掉它再重试` };
+      if (Date.now() > end) return { ok: false, reason: 'config-busy', lock, error: msg`另一个进程（PID ${holder || msg`未知`}）正在改配置，${waitMs / 1000} 秒内没等到；稍后重试` };
       await new Promise((r) => setTimeout(r, 100));
     }
   }
@@ -277,7 +279,7 @@ function editConfig(configPath, id, mutate) {
 async function editLocked(configPath, id, mutate) {
   await ensureConfig(configPath);
   const before = await check(configPath);
-  if (before.errors.some((e) => e.projectId === null)) return { ok: false, reason: 'config-invalid', error: '配置文件不可用，未改动', errors: before.errors };
+  if (before.errors.some((e) => e.projectId === null)) return { ok: false, reason: 'config-invalid', error: msg`配置文件不可用，未改动`, errors: before.errors };
   const cfg = await readJson(configPath);
   cfg.projects ??= [];
   const refused = mutate(cfg);
@@ -291,13 +293,13 @@ async function editLocked(configPath, id, mutate) {
     ({ errors, warnings } = await check(configPath));
   } catch (e) {
     // 校验本身抛异常（如 repo.path 不是字符串）也算全局错误，走下面的恢复，不能把坏配置留在正式文件里
-    errors = [{ projectId: null, field: null, message: `写入后校验出错：${e.message}` }];
+    errors = [{ projectId: null, field: null, message: msg`写入后校验出错：${e.message}` }];
     warnings = [];
   }
   const blocking = errors.filter((e) => e.projectId === null || e.projectId === id);
   if (blocking.length) {
     await rename(bak, configPath);
-    return { ok: false, reason: 'check-failed', error: '写入后校验不过，已恢复原配置', errors: blocking };
+    return { ok: false, reason: 'check-failed', error: msg`写入后校验不过，已恢复原配置`, errors: blocking };
   }
   const revision = randomBytes(8).toString('hex');
   await writeJson(`${configPath}.rev`, { revision, hash: await hashOf(configPath) });
@@ -316,9 +318,9 @@ export function revert(configPath, revision) {
   return withConfigLock(configPath, async () => {
     const rev = await readJson(`${configPath}.rev`).catch(() => null);
     if (rev?.revision !== revision || !existsSync(configPath) || await hashOf(configPath) !== rev.hash) {
-      return { ok: false, reason: 'config-changed', error: '这次写入之后配置又被改过，未还原，保留当前配置' };
+      return { ok: false, reason: 'config-changed', error: msg`这次写入之后配置又被改过，未还原，保留当前配置` };
     }
-    if (!existsSync(`${configPath}.bak`)) return { ok: false, reason: 'not-found', error: '没有备份可还原' };
+    if (!existsSync(`${configPath}.bak`)) return { ok: false, reason: 'not-found', error: msg`没有备份可还原` };
     await rename(`${configPath}.bak`, configPath);
     await rm(`${configPath}.rev`, { force: true });
     return { ok: true };
@@ -327,11 +329,11 @@ export function revert(configPath, revision) {
 
 /** 追加新项目：同 id 已存在 → id-exists；同一仓库（repo.path 或某分支线 workspace）已接入 → already-onboarded。 */
 export async function saveNew(configPath, project) {
-  if (!isObj(project) || typeof project.id !== 'string' || !project.id) return { ok: false, reason: 'bad-input', error: '需要一个含 id 的项目对象' };
+  if (!isObj(project) || typeof project.id !== 'string' || !project.id) return { ok: false, reason: 'bad-input', error: msg`需要一个含 id 的项目对象` };
   return editConfig(configPath, project.id, (cfg) => {
-    if (cfg.projects.some((p) => p?.id === project.id)) return { reason: 'id-exists', id: project.id, error: `已有 id 为 ${project.id} 的项目` };
+    if (cfg.projects.some((p) => p?.id === project.id)) return { reason: 'id-exists', id: project.id, error: msg`已有 id 为 ${project.id} 的项目` };
     const hit = typeof project.repo?.path === 'string' ? findProject(cfg, project.repo.path, path.dirname(configPath)) : null;
-    if (hit) return { reason: 'already-onboarded', id: hit.project.id, matchedBy: hit.matchedBy, error: `该仓库已作为项目 ${hit.project.id} 接入，请改用 save --update` };
+    if (hit) return { reason: 'already-onboarded', id: hit.project.id, matchedBy: hit.matchedBy, error: msg`该仓库已作为项目 ${hit.project.id} 接入，请改用 save --update` };
     cfg.projects.push(project);
   });
 }
@@ -341,15 +343,15 @@ export async function saveNew(configPath, project) {
  * excluded、各类 Pattern、sessions、github、未知字段）原样留在原位置。补丁里有别的字段 → patch-field-not-allowed。
  */
 export async function saveUpdate(configPath, id, patch) {
-  if (!isObj(patch)) return { ok: false, reason: 'bad-input', error: '补丁必须是 JSON 对象' };
+  if (!isObj(patch)) return { ok: false, reason: 'bad-input', error: msg`补丁必须是 JSON 对象` };
   const fields = [
     ...Object.keys(patch).filter((k) => !PATCH_FIELDS.includes(k)),
     ...(patch.repo === undefined ? [] : isObj(patch.repo) ? Object.keys(patch.repo).filter((k) => k !== 'github').map((k) => `repo.${k}`) : ['repo']),
   ];
-  if (fields.length) return { ok: false, reason: 'patch-field-not-allowed', fields, error: `补丁只能改 name、docSources、repo.github，不允许：${fields.join('、')}` };
+  if (fields.length) return { ok: false, reason: 'patch-field-not-allowed', fields, error: msg`补丁只能改 name、docSources、repo.github，不允许：${fields.join('、')}` };
   return editConfig(configPath, id, (cfg) => {
     const p = cfg.projects.find((x) => x?.id === id);
-    if (!p) return { reason: 'not-found', error: `没有 id 为 ${id} 的项目` };
+    if (!p) return { reason: 'not-found', error: msg`没有 id 为 ${id} 的项目` };
     if ('name' in patch) p.name = patch.name;
     if ('docSources' in patch) p.docSources = patch.docSources;
     if (patch.repo && 'github' in patch.repo) p.repo = { ...p.repo, github: patch.repo.github };
@@ -359,7 +361,7 @@ export async function saveUpdate(configPath, id, patch) {
 /** 删除项目；cache/<id>、data/<id> 不动（手动关联是业务数据）。 */
 export async function removeProject(configPath, id) {
   return editConfig(configPath, id, (cfg) => {
-    if (!cfg.projects.some((p) => p?.id === id)) return { reason: 'not-found', error: `没有 id 为 ${id} 的项目` };
+    if (!cfg.projects.some((p) => p?.id === id)) return { reason: 'not-found', error: msg`没有 id 为 ${id} 的项目` };
     cfg.projects = cfg.projects.filter((p) => p?.id !== id);
   });
 }
@@ -407,9 +409,9 @@ async function stopOwned(pid, port) {
   try { process.kill(pid, 'SIGTERM'); } catch { /* 已退出 */ }
   if (!(await waitFor(dead, 5000))) {
     try { process.kill(pid, 'SIGKILL'); } catch { /* 已退出 */ }
-    if (!(await waitFor(dead, 5000))) throw new Error(`后台进程 ${pid} 停不下来`);
+    if (!(await waitFor(dead, 5000))) throw new Error(msg`后台进程 ${pid} 停不下来`);
   }
-  if (!(await waitFor(() => isFree(port), 5000))) throw new Error(`后台进程 ${pid} 已退出，但端口 ${port} 仍被占用`);
+  if (!(await waitFor(() => isFree(port), 5000))) throw new Error(msg`后台进程 ${pid} 已退出，但端口 ${port} 仍被占用`);
 }
 
 // 后台启动：detached + unref，输出追加到 cache/devboard.log，PID 记 cache/devboard.pid（下次 up 据此重启）。
@@ -446,22 +448,22 @@ async function tail(file, n) {
 export async function up(opts = {}) {
   const ctx = context(opts);
   const fail = (reason, error, extra) => ({ ok: false, reason, error, ...extra });
-  if (Number(ctx.nodeVersion.split('.')[0]) !== 24) return fail('node-version', `需要 Node 24，当前是 ${ctx.nodeVersion}；未做任何改动`);
+  if (Number(ctx.nodeVersion.split('.')[0]) !== 24) return fail('node-version', msg`需要 Node 24，当前是 ${ctx.nodeVersion}；未做任何改动`);
   await ensureConfig(ctx.configPath);
   const checked = await check(ctx.configPath);
-  if (checked.errors.some((e) => e.projectId === null)) return fail('config-invalid', '配置文件不可用，未启动', { errors: checked.errors });
+  if (checked.errors.some((e) => e.projectId === null)) return fail('config-invalid', msg`配置文件不可用，未启动`, { errors: checked.errors });
   const raw = await readJson(ctx.configPath);
   // 手改配置可能把端口写成字符串："4318" 按数字用；不是 1–65535 的整数就不动手（往后加 1 找空闲端口会拼出字符串）
   const configured = Number(raw.server?.port ?? DEFAULT_PORT);
   if (!Number.isInteger(configured) || configured < 1 || configured > 65535) {
-    return fail('bad-port', `server.port 应为 1–65535 的整数，当前是 ${JSON.stringify(raw.server?.port)}；未做任何改动`);
+    return fail('bad-port', msg`server.port 应为 1–65535 的整数，当前是 ${JSON.stringify(raw.server?.port)}；未做任何改动`);
   }
 
   const warnings = [...checked.warnings];
-  if ((await ctx.sh('gh', ['auth', 'status'])).code !== 0) warnings.push('gh 不可用或未登录：看板只有文档与会话，没有 PR 数据');
+  if ((await ctx.sh('gh', ['auth', 'status'])).code !== 0) warnings.push(msg`gh 不可用或未登录：看板只有文档与会话，没有 PR 数据`);
   if (ctx.useSystemd && (await ctx.sh('systemctl', ['--user', 'show-environment'])).code !== 0) {
     ctx.useSystemd = false;
-    warnings.push('systemd 用户服务不可用，改为后台进程运行');
+    warnings.push(msg`systemd 用户服务不可用，改为后台进程运行`);
   }
   const service = ctx.useLaunchd ? 'launchd' : ctx.useSystemd ? 'systemd' : null;
   let port = configured;
@@ -488,7 +490,7 @@ export async function up(opts = {}) {
 
   if (who.kind !== 'launchd' && who.kind !== 'systemd') {
     if (await isDevboard(port)) {
-      return fail('unmanaged', `端口 ${port} 上已有 devboard 在运行，但不是 devboard-ctl 或本目录的 LaunchAgent 启动的；请先停掉它再运行 up`, { pid: (await listener(ctx, port))?.pid ?? null });
+      return fail('unmanaged', msg`端口 ${port} 上已有 devboard 在运行，但不是 devboard-ctl 或本目录的 LaunchAgent 启动的；请先停掉它再运行 up`, { pid: (await listener(ctx, port))?.pid ?? null });
     }
     if (!(await isFree(port))) {
       try { await movePort(); } catch (e) { return fail(e.reason ?? 'no-free-port', e.message); }
@@ -511,7 +513,7 @@ export async function up(opts = {}) {
   }
   // ponytail: launchd 的 kickstart -k 是同步杀旧进程再拉起，这里不再额外确认「应答的是新进程」；出现误报再按 lsof 的 PID 比对
   if (await waitFor(() => isDevboard(port), ctx.timeoutMs)) {
-    if (!started.agent) warnings.push('以后台进程运行：重启电脑后需要再运行一次 up');
+    if (!started.agent) warnings.push(msg`以后台进程运行：重启电脑后需要再运行一次 up`);
     return {
       ok: true, url: `http://devboard.localhost:${port}`, port, portChanged: port !== configured, occupant,
       managedBy: started.agent ? `${service}:${started.agent.label}` : `background:${started.pid}`, warnings,
@@ -523,12 +525,12 @@ export async function up(opts = {}) {
     try { process.kill(started.pid, 'SIGKILL'); } catch { /* 已退出 */ }
     await rm(ctx.pidFile, { force: true });
   }
-  return fail('not-ready', `${ctx.timeoutMs / 1000} 秒内服务没有就绪`, { log: await tail(logFile, 20) });
+  return fail('not-ready', msg`${ctx.timeoutMs / 1000} 秒内服务没有就绪`, { log: await tail(logFile, 20) });
 }
 
 async function must(promise, what) {
   const r = await promise;
-  if (r.code !== 0) throw new Error(`${what} 失败：${(r.stderr || r.stdout).trim().split('\n')[0] || `退出码 ${r.code}`}`);
+  if (r.code !== 0) throw new Error(msg`命令 ${what} 失败：${(r.stderr || r.stdout).trim().split('\n')[0] || msg`退出码 ${r.code}`}`);
   return r;
 }
 
@@ -536,6 +538,7 @@ async function must(promise, what) {
  * macOS：本目录的 plist 已加载 → kickstart -k 重启；在但未加载（被 bootout 过）→ bootstrap；
  * 没有 → 按 ops/devboard.plist.template 新建并 bootstrap（created = true；bootstrap 失败时删掉新建的文件再抛错）。
  * 新建的 label 是 com.devboard.agent；该文件已被别的目录的 devboard 占用时加目录哈希后缀，不覆盖。
+ * 新建时把运行 up 的终端的日志语言（logLang()）写成 DEVBOARD_LANG：launchd 没有 LANG，不写日志就默认英文（N26.4）。
  */
 export async function launchdStart(ctx) {
   const domain = `gui/${ctx.uid}`;
@@ -558,7 +561,7 @@ export async function launchdStart(ctx) {
   await mkdir(ctx.agentsDir, { recursive: true });
   await mkdir(ctx.logsDir, { recursive: true });
   await writeFile(file, renderPlist(template, {
-    LABEL: label, NODE: process.execPath, SERVER: ctx.serverEntry, DIR: ctx.dir, PATH,
+    LABEL: label, NODE: process.execPath, SERVER: ctx.serverEntry, DIR: ctx.dir, PATH, DEVBOARD_LANG: logLang(),
     LOG: path.join(ctx.logsDir, 'devboard.log'), ERRLOG: errLog,
   }));
   try {
@@ -582,6 +585,7 @@ export async function launchdCleanup(ctx, { agent, created }) {
  * 没有 → 按 ops/devboard.service.template 在 ~/.config/systemd/user 新建，daemon-reload 后 enable --now（created = true；
  * 失败时删掉新建的文件再抛错）。WantedBy=default.target：登录后自启；要开机即起、不登录也跑，需另行 loginctl enable-linger。
  * 新建的 unit 名是 devboard.service；该文件已被别的目录的 devboard 占用时加目录哈希后缀，不覆盖。日志追加到 cache/devboard.log。
+ * 日志语言同 launchd，新建时写成 DEVBOARD_LANG（N26.4）。
  */
 export async function systemdStart(ctx) {
   const unit = findUnit(await readPlists(ctx.unitsDir, '.service'), ctx.serverEntry);
@@ -601,7 +605,7 @@ export async function systemdStart(ctx) {
   const template = await readFile(path.join(ctx.dir, 'ops', 'devboard.service.template'), 'utf8');
   await mkdir(ctx.unitsDir, { recursive: true });
   await mkdir(path.dirname(ctx.logFile), { recursive: true });
-  await writeFile(file, renderUnit(template, { NODE: ctx.execPath, SERVER: ctx.serverEntry, DIR: ctx.dir, PATH, LOG: ctx.logFile }));
+  await writeFile(file, renderUnit(template, { NODE: ctx.execPath, SERVER: ctx.serverEntry, DIR: ctx.dir, PATH, DEVBOARD_LANG: logLang(), LOG: ctx.logFile }));
   const agent = { file, label: `${name}.service`, errLog: ctx.logFile };
   try {
     await must(ctx.sh('systemctl', ['--user', 'daemon-reload']), 'systemctl daemon-reload');
@@ -639,9 +643,18 @@ async function main(argv) {
   else if (cmd === 'save' && values.update && !values.new) out = await saveUpdate(CONFIG, values.update, stdinJson());
   else if (cmd === 'remove' && arg) out = await removeProject(CONFIG, arg);
   else if (cmd === 'revert' && arg) out = await revert(CONFIG, arg);
-  else out = { ok: false, error: '用法：devboard-ctl check [配置路径] | find <仓库路径> | up [--no-launchd | --no-service] | save --new < 项目.json | save --update <id> < 补丁.json | remove <id> | revert <revision>' };
-  process.stdout.write(`${JSON.stringify(out)}\n`);
+  else out = { ok: false, error: msg`用法：devboard-ctl check [配置路径] | find <仓库路径> | up [--no-launchd | --no-service] | save --new < 项目.json | save --update <id> < 补丁.json | remove <id> | revert <revision>` };
+  process.stdout.write(`${JSON.stringify(localize(out))}\n`);
   process.exitCode = out.ok ? 0 : 1;
+}
+
+// 只在打印前把给人看的说明翻成 DEVBOARD_LANG / LANG 对应的语言（N26.1）；函数返回值保持中文原文，reason 等机器字段不动。
+function localize(out) {
+  const r = { ...out };
+  if (typeof r.error === 'string') r.error = say(r.error);
+  if (Array.isArray(r.warnings)) r.warnings = r.warnings.map(say);
+  for (const k of ['errors', 'otherErrors']) if (Array.isArray(r[k])) r[k] = r[k].map((e) => ({ ...e, message: say(e.message) }));
+  return r;
 }
 
 // 直接运行判断：用 realpath 比较而不是 pathToFileURL(argv[1])——argv[1] 路径里有符号链接（如 macOS 的
@@ -654,7 +667,7 @@ function isDirectRun() {
 
 if (isDirectRun()) {
   main(process.argv.slice(2)).catch((e) => {
-    process.stdout.write(`${JSON.stringify({ ok: false, error: e.message })}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: false, error: say(e.message) })}\n`);
     process.exitCode = 1;
   });
 }

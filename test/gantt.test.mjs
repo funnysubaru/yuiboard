@@ -91,10 +91,10 @@ test('design §3.10.3 期望表要点（基线之外再直接断言一遍）', (
   assert.deepEqual(t['15.2'].gantt.fact, [c372, Date.parse(NOW)]);
   assert.deepEqual([t['15.2'].gantt.est, t['15.2'].gantt.defaultDuration], [[Date.parse(NOW), c372 + 864e5], true]);
   // 13、14 外部阻塞；15.1、16、17 前置无法排期
-  assert.deepEqual(t['13'].gantt.unschedulable, ['外部前置 P1、P5']);
+  assert.deepEqual(t['13'].gantt.unschedulable, ['外部前置 P1\u2063、P5']);
   assert.deepEqual(t['14'].gantt.unschedulable, ['外部前置 P1']);
-  assert.deepEqual(t['15.1'].gantt.unschedulable, ['前置 13、14 无法排期']);
-  assert.deepEqual(t['16'].gantt.unschedulable, ['前置 13、14、15.1 无法排期']);
+  assert.deepEqual(t['15.1'].gantt.unschedulable, ['前置 13\u2063、14 无法排期']);
+  assert.deepEqual(t['16'].gantt.unschedulable, ['前置 13\u2063、14\u2063、15.1 无法排期']);
   assert.deepEqual(t['17'].gantt.unschedulable, ['前置 16 无法排期']);
   // 分组 M0-e：完成 0/2，预估完成日「—（不含 2 个无法排期任务）」
   const e = b.gantt.docs[0].groups[b.docs[0].groups.findIndex((g) => g.code === 'M0-e')];

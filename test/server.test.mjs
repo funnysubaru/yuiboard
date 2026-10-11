@@ -13,6 +13,9 @@ import { startServer } from '../src/server.mjs';
 import { loadProjectDocs } from '../src/docs.mjs';
 import { readCache, writeCache, readManual, changeManual } from '../src/store.mjs';
 
+// 日志断言用中文原文；日志语言跟 DEVBOARD_LANG / LANG 走（N26.1，src/say.mjs），英文另由 i18n.test 覆盖。
+process.env.DEVBOARD_LANG = 'zh';
+
 const NOW = new Date('2026-09-26T08:00:00Z');
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 const FAKE_GH = fileURLToPath(new URL('./fixtures/fake-gh.mjs', import.meta.url));

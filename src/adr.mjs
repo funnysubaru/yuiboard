@@ -4,7 +4,7 @@ import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { parseTasksDoc } from './docs.mjs';
-import { msg } from './msg.mjs';
+import { msg, joinList } from './msg.mjs';
 
 const ADR_NUMBER = /ADR-(\d+)/;
 // 状态两种写法：「- **状态**: 已批准」「> 状态:已接受」「**Status**: Accepted」「ステータス：承認済み」这类行内写法优先；
@@ -67,7 +67,7 @@ export function parseAdrDoc(text, docId, opts = {}) {
   }
   if (opts.duplicates?.length) {
     doc.parse.diagnostics.push({
-      message: msg`ADR 编号 ${number} 重复：另见 ${opts.duplicates.join('、')}；按文件名区分`,
+      message: msg`ADR 编号 ${number} 重复：另见 ${joinList(opts.duplicates)}；按文件名区分`,
       source: { file: opts.file ?? docId, line: 1, text: lines[0].trim().slice(0, 160) },
     });
   }

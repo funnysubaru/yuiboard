@@ -1,7 +1,7 @@
 // 甘特排布（design §3.10、需求 15）：只推时间（epoch 毫秒），像素换算归前端（6.2）。
 // 纯函数：不读时钟、不存排期（需求 15.11），每次由 computeBoard 从文档、PR、会话重新推。
 
-import { msg } from './msg.mjs';
+import { msg, joinList } from './msg.mjs';
 
 const DAY = 864e5;
 
@@ -100,11 +100,11 @@ export function layoutGantt(docs, views, prByNum, defaults, nowMs) {
     const start = factStart(v);
     if (start) { g.fact = [start[0], nowMs]; g.factFrom = [start[1]]; }
     const reasons = [];
-    if (v.deps.dangling.length) reasons.push(msg`悬空依赖：${[...new Set(v.deps.dangling.map((x) => x.raw))].join('、')}`);
+    if (v.deps.dangling.length) reasons.push(msg`悬空依赖：${joinList([...new Set(v.deps.dangling.map((x) => x.raw))])}`);
     const ext = v.deps.external.filter((e) => !e.resolved).map((e) => e.id);
-    if (ext.length) reasons.push(msg`外部前置 ${ext.join('、')}`);
+    if (ext.length) reasons.push(msg`外部前置 ${joinList(ext)}`);
     const up = preds(v.key).filter((d) => unsched.has(d));
-    if (up.length) reasons.push(msg`前置 ${up.map((d) => label(d, t.docId)).join('、')} 无法排期`);
+    if (up.length) reasons.push(msg`前置 ${joinList(up.map((d) => label(d, t.docId)))} 无法排期`);
     if (reasons.length) { g.unschedulable = reasons; unsched.add(v.key); return; }
 
     g.defaultDuration = t.estimateHours == null;

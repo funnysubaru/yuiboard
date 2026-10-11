@@ -18,6 +18,7 @@ import { mask } from './mask.mjs';
 import { claudeCode } from './sessions/claude-code.mjs';
 import { codex } from './sessions/codex.mjs';
 import { msg } from './msg.mjs';
+import { say } from './say.mjs';
 
 // 固定白名单：URL → web/ 下的文件名与类型。不做任何路径拼接，`/../`、`/src/…` 之类的 URL 根本碰不到文件系统。
 const STATIC = {
@@ -61,8 +62,8 @@ export async function startServer({
   cacheDir = path.join(SPACE_ROOT, 'cache'), timing = {}, loadDocs = loadProjectDocs, dataDir = path.join(SPACE_ROOT, 'data'),
 } = {}) {
   const config = await loadConfig(configPath);
-  for (const w of config.warnings) log(`警告：${w}`);
-  for (const e of config.errors) log(`配置错误：${e.message}`);
+  for (const w of config.warnings) log(say(msg`警告：${w}`));
+  for (const e of config.errors) log(say(msg`配置错误：${e.message}`));
 
   // 每项目一个 ProjectRuntime，互不影响（需求 1.4）。有配置错误的项目只登记错误，不读文档、不出空看板（需求 1.6）。
   const runtimes = new Map(config.projects.map((project) => [project.id, {
@@ -98,7 +99,7 @@ export async function startServer({
   const allowedHosts = new Set();
   const server = http.createServer((req, res) => {
     handle(req, res).catch((e) => {
-      log(`请求处理失败：${req.method} ${req.url}：${e.message}`);
+      log(say(msg`请求处理失败：${req.method} ${req.url}：${e.message}`));
       if (!res.headersSent) send(res, 500, 'text/plain; charset=utf-8', msg('服务内部错误'));
       else res.destroy();
     });
@@ -259,7 +260,7 @@ export async function startServer({
       if (docsChanged) await saveCache(rt, 'docs', { optsKey: docsOptsKey(rt.project, config.defaults.hoursPerDay), docs: r.parsedCache });
       await updateSync(rt);
       rt.refreshing.docs = false;
-      rebuild(rt, `文档 ${r.docs.length}（重解析 ${r.reparsed.length}）`, started);
+      rebuild(rt, msg`文档 ${r.docs.length}（重解析 ${r.reparsed.length}）`, started);
     } catch (e) {
       fail(rt, e);
       if (rt.refreshing.docs) { rt.refreshing.docs = false; republish(rt); }
@@ -320,7 +321,7 @@ export async function startServer({
         rt.sessionsCache = caches;
       }
       rt.refreshing.sessions = false;
-      rebuild(rt, `会话 ${sessions.length}（文件 ${sessions.reduce((n, s) => n + s.files.length, 0)}）`, started);
+      rebuild(rt, msg`会话 ${sessions.length}（文件 ${sessions.reduce((n, s) => n + s.files.length, 0)}）`, started);
     } catch (e) {
       fail(rt, e);
       if (rt.refreshing.sessions) { rt.refreshing.sessions = false; republish(rt); }
@@ -348,7 +349,8 @@ export async function startServer({
       await updateSync(rt);
       rt.refreshing.github = false;
       const s = cache.status;
-      rebuild(rt, `GitHub 请求 ${requests}（剩余 ${s.rate?.remaining ?? '未知'}）${s.error ? `，${s.message}` : ''}`, started);
+      const left = s.rate?.remaining ?? msg`未知`;
+      rebuild(rt, s.error ? msg`GitHub 请求 ${requests}（剩余 ${left}），${s.message}` : msg`GitHub 请求 ${requests}（剩余 ${left}）`, started);
     } catch (e) {
       fail(rt, e);
       rt.refreshing.github = false;
@@ -401,7 +403,7 @@ export async function startServer({
     publish(rt, board);
     rt.refreshError = null;
     // 一次刷新一行（需求 18.4）：只有数量与耗时，不含令牌、PR 描述或会话正文
-    log(`[${board.computedAt}] ${rt.project.id} ${what} / ${Math.round(performance.now() - started)}ms`);
+    log(`[${board.computedAt}] ${rt.project.id} ${say(what)} / ${Math.round(performance.now() - started)}ms`);
   }
 
   // 定版本号 → 预先序列化与压缩 → 推给 SSE 订阅者 → 排队写 board.json。
@@ -424,7 +426,7 @@ export async function startServer({
   // 同一错误每 5 秒重复出现时只记一次日志。
   function fail(rt, e) {
     const text = msg`最近一次刷新失败：${mask(String(e?.message ?? e))}`;
-    if (text !== rt.refreshError) log(`[${now().toISOString()}] ${rt.project.id} ${text}`);
+    if (text !== rt.refreshError) log(`[${now().toISOString()}] ${rt.project.id} ${say(text)}`);
     rt.refreshError = text;
   }
 
@@ -444,7 +446,7 @@ export async function startServer({
     try {
       await writeCache(rt.cacheDir, name, value);
     } catch (e) {
-      log(`[${now().toISOString()}] ${rt.project.id} 写缓存 ${name}.json 失败：${mask(e.message)}`);
+      log(`[${now().toISOString()}] ${rt.project.id} ${say(msg`写缓存 ${name}.json 失败：${mask(e.message)}`)}`);
     }
   }
 
@@ -491,10 +493,10 @@ export async function startServer({
     if (await manualStamp(rt.manualDir) === rt.manualStamp) return;
     const r = await readManual(rt.manualDir);
     Object.assign(rt, { manual: r.records, manualError: r.error, manualStamp: r.stamp });
-    if (r.error) log(`[${now().toISOString()}] ${rt.project.id} 手动关联文件读不了：${mask(r.error)}`);
+    if (r.error) log(`[${now().toISOString()}] ${rt.project.id} ${say(msg`手动关联文件读不了：${mask(r.error)}`)}`);
     if (!rt.docs) return; // 启动时还没读文档：首次推算会带上
     await updateSync(rt); // 新关联上的已合并 PR 要查本地同步
-    rebuild(rt, `手动关联 ${r.records?.length ?? '读不了'}`, started);
+    rebuild(rt, r.records ? msg`手动关联 ${r.records.length}` : msg`手动关联读不了`, started);
   }
 
   /**
@@ -527,11 +529,11 @@ export async function startServer({
       return sendJson(res, 500, { error: 'write', messages: [msg`手动关联写入失败：${mask(e.message)}`] });
     }
     Object.assign(rt, { manual: r.records, manualError: null, manualStamp: r.stamp });
-    if (rt.docs) rebuild(rt, `手动关联 ${r.records.length}`, started);
+    if (rt.docs) rebuild(rt, msg`手动关联 ${r.records.length}`, started);
     serial(rt, async () => {
       const n = Object.keys(rt.sync).length;
       await updateSync(rt);
-      if (Object.keys(rt.sync).length !== n) rebuild(rt, '手动关联后补查本地同步', started);
+      if (Object.keys(rt.sync).length !== n) rebuild(rt, msg`手动关联后补查本地同步`, started);
     });
     sendJson(res, 200, { version: rt.version });
   }
@@ -645,9 +647,9 @@ async function main() {
   const { values } = parseArgs({ options: { config: { type: 'string' } } });
   try {
     const { url } = await startServer({ configPath: values.config ? path.resolve(values.config) : undefined });
-    console.log(`devboard 已启动：${url}`);
+    console.log(say(msg`devboard 已启动：${url}`));
   } catch (e) {
-    console.error(`devboard 启动失败：${e.message}`);
+    console.error(say(msg`devboard 启动失败：${e.message}`));
     process.exit(1);
   }
 }

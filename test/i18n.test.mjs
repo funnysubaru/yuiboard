@@ -5,7 +5,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { scan } from './i18n-scan.mjs';
 import { parseTasksDoc } from '../src/docs.mjs';
 import { computeBoard } from '../src/engine.mjs';
-import { t, tx, setLang, pickLang, SLOTS } from '../web/i18n.mjs';
+import { t, tx, setLang, getLang, pickLang, SLOTS } from '../web/i18n.mjs';
+import { msg, joinList } from '../src/msg.mjs';
+import { say, logLang } from '../src/say.mjs';
 import ja, { server as jaServer } from '../web/i18n-ja.mjs';
 import en, { server as enServer } from '../web/i18n-en.mjs';
 
@@ -14,6 +16,7 @@ const WEB = ['web/app.mjs', 'web/svg.mjs'];
 const SRC = [
   ...readdirSync(new URL('../src', import.meta.url)).filter((f) => f.endsWith('.mjs')).map((f) => `src/${f}`),
   ...readdirSync(new URL('../src/sessions', import.meta.url)).filter((f) => f.endsWith('.mjs')).map((f) => `src/sessions/${f}`),
+  'ops/devboard-ctl.mjs', // 命令行输出给人看的说明（N26.1）
 ];
 const placeholders = (s) => [...s.matchAll(/\{(\d+)\}/g)].map((m) => m[1]).sort().join();
 
@@ -33,22 +36,7 @@ const SRC_NOT_DISPLAYED = new Set([
   '）',
   '{0} 起',
   '^(?:任务\\s*|タスク\\s*|Task\\s*)?({0})(?=[\\s:：]|$)',
-  '警告：{0}',
-  '配置错误：{0}',
-  '请求处理失败：{0} {1}：{2}',
-  '文档 {0}（重解析 {1}）',
-  '会话 {0}（文件 {1}）',
-  '未知',
-  '，{0}',
-  'GitHub 请求 {0}（剩余 {1}）{2}',
-  '[{0}] {1} 写缓存 {2}.json 失败：{3}',
-  '[{0}] {1} 手动关联文件读不了：{2}',
-  '读不了',
-  '手动关联 {0}',
-  '手动关联后补查本地同步',
   ': 心跳\n\n',
-  'devboard 已启动：{0}',
-  'devboard 启动失败：{0}',
   '拒绝写入 {0}：只允许 cache/<项目> 或 data/<项目> 目录',
 ]);
 
@@ -114,16 +102,48 @@ test('i18n：tx 只按服务端词典整句翻译；插值默认原样（用户�
   assert.equal(tx('依赖 a#1、a#2 还没完成，却已有 PR #3'), '依存先 a#1、a#2 が未完了なのに、PR #3 があります');
 });
 
-test('i18n：真实歧义说明里文档名含「、」时，引用项原样保留（PR #28 review）', (t_) => {
+test('i18n：joinList 拼的列表——英文换「, 」，中日去掉标记；没有标记的「、」（引用原文）不动', (t_) => {
+  t_.after(() => setLang('zh'));
+  const S = `依赖 ${joinList(['a#1', 'b、c#2'])} 还没完成，却已有 PR ${joinList(['#3', '#4'])}`;
+  const more = `PR 标题里的「x」有歧义，可能是 ${joinList(['a#1', 'b#1', 'c#1', 'd#1', 'e#1'])} 等 7 个`;
+  setLang('zh');
+  assert.equal(tx(S), '依赖 a#1、b、c#2 还没完成，却已有 PR #3、#4');
+  setLang('ja');
+  assert.equal(tx(S), '依存先 a#1、b、c#2 が未完了なのに、PR #3、#4 があります');
+  setLang('en');
+  assert.ok(tx(S).includes('a#1, b、c#2') && tx(S).includes('#3, #4') && !tx(S).includes('\u2063'), tx(S));
+  assert.ok(tx(more).includes('a#1, b#1, c#1, d#1, e#1') && !tx(more).includes('\u2063'), tx(more));
+  assert.equal(tx(`未登记的句子 ${joinList(['1', '2'])}`), '未登记的句子 1、2', '没对上模板也不留标记');
+});
+
+test('i18n：真实歧义说明里文档名含「、」时，引用项原样保留（PR #28 review），列表分隔照样换（N26.2）', (t_) => {
   t_.after(() => setLang('zh'));
   const docs = ['alpha、beta', 'gamma'].map((docId) => ({ docId, archived: false, ...parseTasksDoc('- [ ] 1 one\n', docId) }));
   const pr = { number: 7, title: 'Task 1', body: '', url: '', state: 'OPEN', isDraft: false, baseRefName: 'main', headRefName: 'b7', labels: [],
     createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-20T00:00:00Z', readyAt: null, mergedAt: null, closedAt: null, mergeCommit: null };
   const b = computeBoard(docs, [pr], [], [], {}, { id: 'demo' }, '2026-09-26T00:00:00.000Z');
   const detail = b.conflicts.find((c) => c.type === 'h' && c.pr === 7).detail;
-  assert.equal(detail, 'PR 标题里的「1」有歧义，可能是 alpha、beta#1、gamma#1');
+  assert.equal(detail, 'PR 标题里的「1」有歧义，可能是 alpha、beta#1\u2063、gamma#1');
+  assert.equal(tx(detail), 'PR 标题里的「1」有歧义，可能是 alpha、beta#1、gamma#1');
   setLang('en');
-  assert.equal(tx(detail), '“1” in the PR title is ambiguous; it could be alpha、beta#1、gamma#1');
+  assert.equal(tx(detail), '“1” in the PR title is ambiguous; it could be alpha、beta#1, gamma#1', '文档名里的「、」不动，列表分隔换成「, 」');
+});
+
+test('i18n：用户原文里的 U+2063 不被当成列表标记（PR #34 review）', (t_) => {
+  t_.after(() => setLang('zh'));
+  // 单独的标记、标记 +「、」、两个标记：普通插值没经过 joinList 转义，一律原样（yuiboard#1 review）
+  const paths = ['/tmp/A\u2063B.md', '/tmp/A\u2063、B.md', '/tmp/A\u2063\u2063B.md'];
+  // 文档名正好含分隔符序列（新旧两种写法），经 joinList 转义后仍是两个候选
+  const docs = ['al\u2063、pha', 'be、\u2063ta', 'gamma'].map((docId) => ({ docId, archived: false, ...parseTasksDoc('- [ ] 1 one\n', docId) }));
+  const pr = { number: 7, title: 'Task 1', body: '', url: '', state: 'OPEN', isDraft: false, baseRefName: 'main', headRefName: 'b7', labels: [],
+    createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-20T00:00:00Z', readyAt: null, mergedAt: null, closedAt: null, mergeCommit: null };
+  const detail = computeBoard(docs, [pr], [], [], {}, { id: 'demo' }, '2026-09-26T00:00:00.000Z').conflicts.find((c) => c.type === 'h').detail;
+  for (const l of ['zh', 'ja', 'en']) {
+    setLang(l);
+    for (const p of paths) assert.ok(tx(`配置文件 ${p} 读取失败：x`).includes(p), `${l}: ${tx(`配置文件 ${p} 读取失败：x`)}`);
+    assert.ok(tx(detail).includes('al\u2063、pha#1') && tx(detail).includes('be、\u2063ta#1'), `${l}: ${tx(detail)}`);
+  }
+  assert.ok(tx(detail).endsWith('al\u2063、pha#1, be、\u2063ta#1, gamma#1'), tx(detail));
 });
 
 test('i18n：SLOTS 登记的模板都是服务端词典里的键，位置都是真实占位符', () => {
@@ -131,4 +151,23 @@ test('i18n：SLOTS 登记的模板都是服务端词典里的键，位置都是�
     assert.ok(Object.hasOwn(enServer, key) && Object.hasOwn(jaServer, key), key);
     for (const idx of Object.keys(slots)) assert.ok(key.includes(`{${idx}}`), `${key} 没有 {${idx}}`);
   }
+});
+
+test('日志与 devboard-ctl 输出的语言（N26.1）：DEVBOARD_LANG 优先，其次 LC_ALL / LC_MESSAGES / LANG，都不认识用英文', (t_) => {
+  const saved = process.env.DEVBOARD_LANG;
+  t_.after(() => { if (saved === undefined) delete process.env.DEVBOARD_LANG; else process.env.DEVBOARD_LANG = saved; });
+  assert.equal(logLang({}), 'en', 'launchd / systemd 下通常没有 LANG');
+  assert.equal(logLang({ LANG: 'zh_CN.UTF-8' }), 'zh');
+  assert.equal(logLang({ LANG: 'C', LC_ALL: 'ja_JP.UTF-8' }), 'ja');
+  assert.equal(logLang({ LANG: 'zh_CN.UTF-8', DEVBOARD_LANG: 'en' }), 'en');
+  assert.equal(logLang({ DEVBOARD_LANG: 'xx', LANG: 'fr_FR' }), 'en');
+  process.env.DEVBOARD_LANG = 'en';
+  assert.equal(say(msg`devboard 已启动：${'http://127.0.0.1:4317/'}`), 'devboard is running: http://127.0.0.1:4317/');
+  assert.equal(say(msg`文档 ${3}（重解析 ${1}）`), 'docs 3 (reparsed 1)');
+  assert.equal(say(msg`GitHub 请求 ${2}（剩余 ${msg`未知`}）`), 'GitHub requests 2 (remaining unknown)');
+  assert.equal(say(msg`配置错误：${msg`没有 id 为 ${'x'} 的项目`}`), 'Config error: No project with id x', '子句也翻');
+  assert.equal(say(msg`前置 ${joinList(['1', '2'])} 无法排期`), 'Prerequisites can’t be scheduled: 1, 2');
+  process.env.DEVBOARD_LANG = 'zh';
+  assert.equal(say(msg`前置 ${joinList(['1', '2'])} 无法排期`), '前置 1、2 无法排期', '中文原样，只去列表标记');
+  assert.equal(getLang(), 'zh', '不改页面语言');
 });

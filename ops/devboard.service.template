@@ -5,6 +5,7 @@ Description=YUIBoard (devboard) local dashboard
 ExecStart="{{NODE}}" "{{SERVER}}"
 WorkingDirectory={{DIR}}/.
 Environment="PATH={{PATH}}"
+Environment="DEVBOARD_LANG={{DEVBOARD_LANG}}"
 Restart=always
 RestartSec=10
 StandardOutput=append:{{LOG}}

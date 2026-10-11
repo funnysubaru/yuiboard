@@ -29,6 +29,7 @@ npm test
 | `src/mask.mjs`, `src/msg.mjs` | Secret masking; marking server messages for translation |
 | `web/` | Native ES-module frontend: `app.mjs` (views), `svg.mjs` (hand-drawn charts), `i18n*.mjs` |
 | `ops/devboard-ctl.mjs` | Service install / restart and config editing used by the skill |
+| `ops/demo.mjs` | `npm run demo`: builds a fictional project (git repo, docs, PRs for the fake `gh`, a Claude Code session) in the OS temp dir and serves it; nothing is written to this directory |
 | `skills/devboard-add-project/` | The AI skill that onboards a repository |
 | `test/` | `node:test` suites and fixtures (all fictional data) |
 
@@ -55,7 +56,7 @@ Please keep these intact. A PR that breaks one of them can't be merged as it is.
 
 - **Zero npm dependencies, no build step.** Use the Node standard library and the native ES-module frontend. Charts are hand-drawn SVG.
 - **Read-only.** YUIBoard never writes to the watched repository, `~/.claude`, `~/.codex` or GitHub.
-  - git runs only the read-only commands in `GIT_ALLOWED` (`src/docs.mjs`), with `GIT_OPTIONAL_LOCKS=0`.
+  - git runs only the read-only commands in `GIT_ALLOWED` (`src/docs.mjs`), with `GIT_OPTIONAL_LOCKS=0` and without inherited `GIT_*` variables (`gitEnv()` in `src/config.mjs`).
   - GitHub is read only through `gh api graphql`, and YUIBoard never holds a token.
   - Only `src/store.mjs` writes to disk, and only to `cache/` and `data/`.
   - The one exception is `ops/devboard-ctl.mjs`, which also writes `devboard.config.json` (plus its `.bak`), `cache/devboard.pid` / `.log`, and the LaunchAgent plist or systemd unit that it created itself.
@@ -63,6 +64,8 @@ Please keep these intact. A PR that breaks one of them can't be merged as it is.
 - **Three UI languages.** The Chinese source string is the translation key.
   - Wrap frontend text in `` t`…` `` (`web/i18n.mjs`).
   - Wrap server sentences that reach the page in `` msg`…` `` (`src/msg.mjs`). The frontend translates them with `tx()`.
+  - Server log lines and `devboard-ctl` messages are `` msg`…` `` templates too; print them through `say()` (`src/say.mjs`), which picks the language from `DEVBOARD_LANG`, then `LC_ALL` / `LC_MESSAGES` / `LANG`, defaulting to English.
+  - Lists the server builds into a sentence use `joinList()` (`src/msg.mjs`), so the English UI can show them with ", ".
   - Put the Japanese and English translations in `web/i18n-ja.mjs` and `web/i18n-en.mjs`.
   - Never translate user content: task titles, paths, PR titles and session text stay as written.
   - Write each sentence as one template; don't glue sentences together from fragments.
