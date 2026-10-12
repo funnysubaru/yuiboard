@@ -71,10 +71,17 @@ AI 只经 `devboard-ctl save` / `remove` 改 `devboard.config.json`（改前自�
 
 本仓库同时是一个 Claude Code 插件，在终端和桌面 App 里都会在对话旁打开 YUIBoard 面板，显示当前会话所属的项目：总览数字、「本会话正在做」的任务卡片、任务树、需要确认、诊断。数据从正在运行的 YUIBoard 服务读，不做任何改动。已在 Claude Code 2.1.293–2.1.296 上验证。
 
-在 Claude Code 会话里安装（需要 Claude Code 2.1.275 或更新）：
+在 Claude Code 会话里安装：
 
 ```
-/plugin install yuiboard --marketplace funnysubaru/yuiboard
+/plugin marketplace add funnysubaru/yuiboard
+/plugin install yuiboard@yuiboard
+```
+
+也可以在终端里一步装好（需要 Claude Code 2.1.275 或更新）：
+
+```sh
+claude plugin install yuiboard --marketplace funnysubaru/yuiboard
 ```
 
 插件和 YUIBoard 服务要是同一版本。更新服务（`git pull` 后重启）时，插件也一起更新：`claude plugin update yuiboard@yuiboard`。

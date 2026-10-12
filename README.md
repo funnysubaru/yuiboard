@@ -71,10 +71,17 @@ The AI changes `devboard.config.json` only through `devboard-ctl save` / `remove
 
 This repository is also a Claude Code plugin. It opens a YUIBoard pane next to the conversation, in both the terminal and the desktop app. The pane shows the project the session belongs to: the overall numbers, a card with the task this session is working on, the task tree, Needs attention and Diagnostics. It reads from your running YUIBoard service and changes nothing. Tested with Claude Code 2.1.293–2.1.296.
 
-Install it in a Claude Code session (Claude Code 2.1.275 or later):
+Install it in a Claude Code session:
 
 ```
-/plugin install yuiboard --marketplace funnysubaru/yuiboard
+/plugin marketplace add funnysubaru/yuiboard
+/plugin install yuiboard@yuiboard
+```
+
+Or from a shell in one step (Claude Code 2.1.275 or later):
+
+```sh
+claude plugin install yuiboard --marketplace funnysubaru/yuiboard
 ```
 
 The plugin and your YUIBoard service must be the same version. When you update the service (`git pull`, then restart it), update the plugin too: `claude plugin update yuiboard@yuiboard`.

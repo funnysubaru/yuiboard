@@ -71,10 +71,17 @@ AI が `devboard.config.json` を変更するのは `devboard-ctl save` / `remov
 
 このリポジトリは Claude Code のプラグインでもあります。ターミナルでもデスクトップアプリでも、会話の横に YUIBoard のペインを開き、そのセッションが属するプロジェクトを表示します。全体の数字、「このセッションで作業中」のタスクのカード、タスクツリー、要確認、診断です。データは動いている YUIBoard サービスから読み、何も変更しません。Claude Code 2.1.293–2.1.296 で確認済みです。
 
-Claude Code のセッションでインストールします（Claude Code 2.1.275 以降）。
+Claude Code のセッションでインストールします。
 
 ```
-/plugin install yuiboard --marketplace funnysubaru/yuiboard
+/plugin marketplace add funnysubaru/yuiboard
+/plugin install yuiboard@yuiboard
+```
+
+ターミナルから一度に入れることもできます（Claude Code 2.1.275 以降）。
+
+```sh
+claude plugin install yuiboard --marketplace funnysubaru/yuiboard
 ```
 
 プラグインと YUIBoard サービスは同じバージョンにしてください。サービスを更新するとき（`git pull` して再起動）は、プラグインも `claude plugin update yuiboard@yuiboard` で更新します。
