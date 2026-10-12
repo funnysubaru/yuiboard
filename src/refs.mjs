@@ -12,9 +12,13 @@ const SEP = '(?:、|，|,\\s*and(?![A-Za-z])|,|/|和|及|与|&|(?<![A-Za-z])and(
 const ITEM = `${NUM}(?:\\s*${DASH}\\s*${NUM})?`;
 // 带前缀编号：任务 15.2 / Task: 3 / Tasks 3 and 4 / タスク 3 / 任务 4.1–4.3、4.5。前面不能紧贴字母（subtask 3 不算）；
 // 编号后不能紧跟字母数字或「.数字」，免得半截匹配。
-// 紧跟「（部分）」/「(部分)」/「(partial)」/「（一部）」= 这个 PR 只做了这些任务的一部分（整条列表都算部分）。
+// 「部分」标记的全部写法只在这里定义（N9）：紧跟在引用后面，括号里写 部分 / 部分完成 / 一部 / partial / part，
+// 或不带括号的「部分」「部分完成」（可隔一个逗号：「任务 99，部分」），后面不能再接文字（「部分页面」是普通叙述）。
+// 修饰紧挨着的那一处引用：带前缀的编号列表整条算部分（「任务 13、14（部分）」）；任务键、里程碑代号只修饰它自己，
+// 代号带标记 = 这个代号展开的整组任务都算部分交付（owner 2026-10-12）。
+const PARTIAL = '\\s*(?:[（(]\\s*(?:部分(?:完成)?|一部|[Pp]art(?:ial)?)\\s*[)）]|[，,]?\\s*部分(?:完成)?(?![\\u3040-\\u30ff\\u3400-\\u9fffA-Za-z0-9]))';
 const PREFIXED = new RegExp(
-  `(?<![A-Za-z])(?:任务|タスク|[Tt]asks?)\\s*[:：#]?\\s*(${ITEM}(?:\\s*${SEP}\\s*${ITEM})*)(?![A-Za-z0-9]|\\.\\d)(\\s*[（(]\\s*(?:部分|一部|[Pp]artial)\\s*[)）])?`, 'g');
+  `(?<![A-Za-z])(?:任务|タスク|[Tt]asks?)\\s*[:：#]?\\s*(${ITEM}(?:\\s*${SEP}\\s*${ITEM})*)(?![A-Za-z0-9]|\\.\\d)(${PARTIAL})?`, 'g');
 const ITEM_RE = new RegExp(`(${NUM})(?:\\s*${DASH}\\s*(${NUM}))?`, 'g');
 // PR 标题末尾的版本括号「(collab 2.0.4)」「(1.15.743–744)」：识别前先遮掉，作第二道保险。
 const VERSION_PAREN = /\(\s*[a-z]*\s*\d+\.\d+\.\d+(?:\s*[–-]\s*\d+)?\s*\)/gi;
@@ -30,13 +34,16 @@ const lower = (s) => s.toLowerCase();
 /**
  * @typedef {{ kind: 'key'|'num'|'code'|'docId', text: string, index: number }} RefSpan
  * @typedef {{ keys: string[], nums: string[], codes: string[], docIds: string[], scopes: string[],
- *   partial: string[], spans: RefSpan[] }} RawRefs
+ *   partial: string[], unknown: string[], spans: RefSpan[] }} RawRefs
  *   keys   完整任务键 `docId#编号`；
  *   nums   带前缀的编号，范围写成 `A–B`（统一成长横），按文档展开在 resolveRefs 里做；
  *   codes  里程碑代号，取 knownCodes 里的写法；
  *   docIds 文本中出现的已知 docId（含完整任务键里的），用于收窄；
  *   scopes conventional-commit scope（design 签名外新增，收窄用）；
- *   partial 只以「任务 N（部分）」出现过的编号（nums 的子集；同一段里另有不带「部分」的同号引用就不算）；
+ *   partial 带「部分」标记（见 PARTIAL）的引用，取 keys / nums / codes 里的同一写法；同一段里另有不带标记的同一引用时
+ *          仍算部分（保守，owner 2026-10-12）；
+ *   unknown 看着像任务键 / 里程碑代号、却对不上 knownDocIds / knownCodes 的原文（大小写写错的 `Devboard-MVP#3`、对不上的 `ADR-0099#3`、`M0-z`），
+ *          不参与 resolveRefs，由调用方报出来（N9：看得出意图却认不了的写法不能静默丢掉）；
  *   spans  每处命中的原文与位置（NFC 后文本的下标），给页面展示依据。
  */
 
@@ -49,8 +56,7 @@ const lower = (s) => s.toLowerCase();
  */
 export function extractRefs(text, { knownDocIds = [], knownCodes = [] } = {}) {
   let s = (text ?? '').normalize('NFC');
-  const out = { keys: [], nums: [], codes: [], docIds: [], scopes: [], partial: [], spans: [] };
-  const full = [];
+  const out = { keys: [], nums: [], codes: [], docIds: [], scopes: [], partial: [], unknown: [], spans: [] };
   const scope = CC_SCOPE.exec(s);
   if (scope) out.scopes = scope[1].split(/[,/]/).map((x) => x.trim()).filter(Boolean);
 
@@ -64,9 +70,10 @@ export function extractRefs(text, { knownDocIds = [], knownCodes = [] } = {}) {
   const ids = [...new Set(knownDocIds)].sort((a, b) => b.length - a.length);
   if (ids.length) {
     const alt = ids.map(escapeRe).join('|');
-    scan(new RegExp(`(?<![A-Za-z0-9_-])(${alt})#(${NUM})(?![A-Za-z0-9]|\\.\\d)`, 'g'), (m) => {
+    scan(new RegExp(`(?<![A-Za-z0-9_-])(${alt})#(${NUM})(?![A-Za-z0-9]|\\.\\d)(${PARTIAL})?`, 'g'), (m) => {
       const key = `${m[1]}#${stripT(m[2])}`;
       push(out.keys, key); push(out.docIds, m[1]);
+      if (m[3]) push(out.partial, key);
       out.spans.push({ kind: 'key', text: m[0], index: m.index });
     });
     scan(new RegExp(`(?<![A-Za-z0-9_-])(${alt})(?![A-Za-z0-9_-])`, 'g'), (m) => {
@@ -79,23 +86,39 @@ export function extractRefs(text, { knownDocIds = [], knownCodes = [] } = {}) {
     for (const it of m[1].matchAll(ITEM_RE)) {
       const n = it[2] ? `${stripT(it[1])}–${stripT(it[2])}` : stripT(it[1]);
       push(out.nums, n);
-      push(m[2] ? out.partial : full, n);
+      if (m[2]) push(out.partial, n);
     }
     out.spans.push({ kind: 'num', text: m[0].trim(), index: m.index });
   });
-  out.partial = out.partial.filter((n) => !full.includes(n));
 
   // 代号整词、忽略大小写：前后不是 [A-Za-z0-9-]（M0-c 不会命中 M0-cd，也不会命中 xM0-c）。
   const codes = [...new Set(knownCodes)].sort((a, b) => b.length - a.length);
   if (codes.length) {
     const byLower = new Map(codes.map((c) => [lower(c), c]));
-    scan(new RegExp(`(?<![A-Za-z0-9-])(${codes.map(escapeRe).join('|')})(?![A-Za-z0-9-])`, 'gi'), (m) => {
-      push(out.codes, byLower.get(lower(m[1])));
+    scan(new RegExp(`(?<![A-Za-z0-9-])(${codes.map(escapeRe).join('|')})(?![A-Za-z0-9-])(${PARTIAL})?`, 'gi'), (m) => {
+      const code = byLower.get(lower(m[1]));
+      push(out.codes, code);
+      if (m[2]) push(out.partial, code);
       out.spans.push({ kind: 'code', text: m[0], index: m.index });
     });
   }
+
+  // 剩下的文本里，像任务键或像已知代号形态的写法记进 unknown。任务键只认两种：文档名大小写写错（Devboard-MVP#3），
+  // 或 ADR 编号对不上（ADR-0099#3）；其余 `词#编号` 多是别的仓库的 issue / PR（other-vendor#127），不报。
+  // 代号：同样的字母前缀、同样有没有「-后缀」（已知 M0-c 时 M0-z 算，M2 不算）。
+  const lowIds = new Set(ids.map(lower));
+  scan(new RegExp(`(?<![A-Za-z0-9_./-])([A-Za-z][\\w.-]*)#${NUM}(?![A-Za-z0-9]|\\.\\d)`, 'g'), (m) => {
+    if (lowIds.has(lower(m[1])) || /^ADR-\d+$/i.test(m[1])) push(out.unknown, m[0]);
+  });
+  const shapes = new Set(codes.map(codeShape).filter(Boolean));
+  if (shapes.size) {
+    scan(/(?<![A-Za-z0-9-])[A-Za-z]+\d+(?:-[A-Za-z0-9]+)?(?![A-Za-z0-9-])/g, (m) => { if (shapes.has(codeShape(m[0]))) push(out.unknown, m[0]); });
+  }
   return out;
 }
+
+// 代号形态：小写字母前缀 + 有没有「-后缀」（M0-c → 'm-'，M1 → 'm'）；不是「字母+数字[-后缀]」的代号不参与。
+const codeShape = (c) => { const m = /^([A-Za-z]+)\d+(-[A-Za-z0-9]+)?$/.exec(c); return m && lower(m[1]) + (m[2] ? '-' : ''); };
 
 /**
  * 从 head 分支名识别引用（design §3.5 第 6 条；只在标题与描述都无引用时由调用方启用）。
@@ -106,7 +129,7 @@ export function extractRefs(text, { knownDocIds = [], knownCodes = [] } = {}) {
  * @returns {RawRefs}
  */
 export function extractBranchRefs(branch, { knownCodes = [] } = {}) {
-  const out = { keys: [], nums: [], codes: [], docIds: [], scopes: [], partial: [], spans: [] };
+  const out = { keys: [], nums: [], codes: [], docIds: [], scopes: [], partial: [], unknown: [], spans: [] };
   const norm = (c) => lower(c).replace(/[^a-z0-9]/g, '');
   const codeOf = new Map(knownCodes.map((c) => [norm(c), c]));
   const b = (branch ?? '').normalize('NFC');

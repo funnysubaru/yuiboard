@@ -10,19 +10,26 @@ import { parseRelations } from './relations.mjs';
 import { discoverAdrs, parseAdrDoc } from './adr.mjs';
 import { msg, joinList } from './msg.mjs';
 import { gitEnv } from './config.mjs';
+import { mdUnrenderedLines } from '../web/md.mjs';
 
 const DEFAULT_MILESTONE_CODE = '(?:里程碑|[Mm]ilestone|マイルストーン)\\s*([A-Za-z]+\\d+(?:-[A-Za-z0-9]+)?)';
 // 分组别名只供文档内依赖引用（「依赖 阶段 1」「depends on Phase 1」「フェーズ 1 に依存」），不参与 PR / 会话匹配。
 const GROUP_ALIAS = /(?:阶段|[Pp]hase|[Ss]tage|フェーズ|PR)\s*\d+[a-z]?/;
+// N9：中文数字的阶段标题「## 阶段一」「## 第一阶段」「## 第 2 阶段」归一成「阶段 1」，与「阶段 1」同一别名。
+// 数词类里带上百千万，整个数词一起取，超出上限时整体不认（「阶段一百」不能被截成「阶段一」）。
+const CN_STAGE = /阶段\s*([〇零一二两三四五六七八九十百千万]+)|第\s*(\d+|[〇零一二两三四五六七八九十百千万]+)\s*阶段/;
 const NUM = 'T?\\d+[a-z]?(?:\\.\\d+[a-z]?)*';
 // design §3.3 的任务行正则；复选框放宽成任意单字符，空格 / x / X / ~ 以外的按未勾处理并记诊断。
 // 分组：1 复选框 2 开头删除线 3 开头加粗 4 编号原文(label) 5 编号 6 标题剩余部分
 const TASK_LINE = new RegExp(`^\\s*[-*]\\s+\\[(.)\\]\\s+(~~)?(\\*\\*)?((?:Task\\s*|タスク\\s*)?(${NUM})\\.?)[\\s:：](.*)$`);
 const CHECKBOX_LINE = /^\s*[-*]\s+\[(.)\](?:\s+(.*))?$/;
 // 复选框后以数字 / T数字 / **数字 开头却没通过任务行正则 = 疑似任务行（写法有误），要让 owner 看到。
-const SUSPECT = /^(?:~~)?(?:\*\*)?(?:Task\s*|タスク\s*)?T?\d/;
+// N9：小写 task、全角数字（「- [ ] task 2」「- [ ] １ 搭骨架」）也算疑似，不再静默当成无编号复选框。
+const SUSPECT = /^(?:~~)?(?:\*\*)?(?:(?:task|タスク)\s*)?t?[\d０-９]/i;
 // 标题式任务必须带 Task / T，避免把「## 0. 需要 owner 提供的前置条件」认成任务。
 const TITLE_TASK = /^(?:Task\s*|タスク\s*|T)(\d+[a-z]?(?:\.\d+)*)\s*(✅)?\s*[:：—-]\s*(.*)$/;
+// N9：已有任务行时，像标题式任务的标题（含「### 任务 1：」）不会被认成任务，记诊断提示改写。
+const TITLE_TASK_LIKE = /^(?:Task|タスク|任务|T)\s*(\d+[a-z]?(?:\.\d+)*)\s*(?:✅)?\s*[:：—-]\s*(.*)$/i;
 const HEADING = /^(#{1,6})\s+(.*?)\s*$/;
 const FENCE = /^\s*(`{3,}|~{3,})/;
 // 英文 / 日文：Estimate(d)、Estimated time / effort、見積もり / 見積り / 見積、所要時間（前面紧贴字母的 re-estimate 不算）。
@@ -41,7 +48,7 @@ const WHOLE_STRIKE = /^(?:\*\*)?~~(?:(?!~~).)+~~(?:\*\*)?\s*$/;
  *   file 用于 SourceRef.file（仓库内相对路径），缺省用 docId。
  * @returns {{ title: string|null,
  *   parse: { state: 'ok'|'partial'|'no-tasks', reason?: string, unrecognizedLines: number[],
- *            unknownRelations: object[], unknownEstimates: SourceRef[], mermaidUsed: boolean,
+ *            unknownRelations: object[], unknownEstimates: SourceRef[], unrenderedMarkdown: (SourceRef & { kind: string })[], mermaidUsed: boolean,
  *            diagnostics: { message: string, source: SourceRef }[], uncheckedBoxes: number },
  *   groups: { id: string, title: string, code: string|null, alias: string|null, line: number }[],
  *   tasks: object[], prerequisites: object[], relations: object[] }}  relations / prerequisites 见 relations.mjs；tasks 形状见 design §4 Task，数组保持文档顺序；行号一律从 1 起；
@@ -82,16 +89,18 @@ export function parseTasksDoc(text, docId, opts = {}) {
 
   // 标题式任务只在一条任务行都没有时兜底启用（design §3.3）。
   const titleMode = !items.some((it) => it.kind === 'task');
-  if (titleMode) {
-    for (const it of items) {
-      const t = it.kind === 'heading' && it.level >= 2 && it.level <= 4 && TITLE_TASK.exec(it.text);
-      if (t) Object.assign(it, { kind: 'title-task', t });
-    }
+  for (const it of items) {
+    if (it.kind !== 'heading' || it.level < 2 || it.level > 4) continue;
+    const t = titleMode && TITLE_TASK.exec(it.text);
+    if (t) Object.assign(it, { kind: 'title-task', t });
+    const like = !titleMode && TITLE_TASK_LIKE.exec(it.text);
+    if (like) diagnostics.push({ message: msg`标题「${it.text}」像标题式任务，但本文档已有任务行，它不会被当成任务；建议改成「- [ ] ${like[1]} ${like[2]}」`, source: ref(it.i) });
   }
 
   const groups = [];
   const tasks = [];
   const unknownEstimates = [];
+  const unrenderedMarkdown = []; // N12：正文里页面认不了的 Markdown 写法（与 web/md.mjs 同口径）
   const usedGroups = new Set();
   const stack = []; // 当前所在的标题链（非任务标题），用来找分组
   items.forEach((it, idx) => {
@@ -115,6 +124,7 @@ export function parseTasksDoc(text, docId, opts = {}) {
     const est = findEstimate(lines, it.i + 1, end, hoursPerDay);
     // 识别不出的写法：estimateHours 为 null，甘特按默认工期兜底，这里记诊断（需求 15.5）。
     if (est && est.hours === null) unknownEstimates.push(ref(est.i));
+    for (const x of mdUnrenderedLines(lines.slice(it.i + 1, end + 1))) unrenderedMarkdown.push({ ...ref(it.i + 1 + x.i), kind: x.kind });
     if (task.checkboxIssue) diagnostics.push({ message: msg`复选框「[${task.checkboxIssue}]」不是 [ ] / [x] / [~]，按未勾处理`, source: ref(it.i) });
     delete task.checkboxIssue;
     tasks.push({
@@ -141,7 +151,7 @@ export function parseTasksDoc(text, docId, opts = {}) {
   }
 
   const rel = parseRelations(lines, { docId, file, tasks, groups, prerequisiteIdPattern: opts.prerequisiteIdPattern });
-  const parse = { state: 'ok', unrecognizedLines, unknownRelations: rel.unknownRelations, unknownEstimates, mermaidUsed: rel.mermaidUsed, diagnostics, uncheckedBoxes };
+  const parse = { state: 'ok', unrecognizedLines, unknownRelations: rel.unknownRelations, unknownEstimates, unrenderedMarkdown, mermaidUsed: rel.mermaidUsed, diagnostics, uncheckedBoxes };
   if (tasks.length === 0) {
     parse.state = 'no-tasks';
     parse.reason = unrecognizedLines.length
@@ -159,9 +169,22 @@ function makeGroup(h, codeRe) {
   return {
     id: `L${h.i + 1}`, // 用标题行号：文档内唯一；分组不参与手动关联，行号变了无妨
     title: h.text, code,
-    alias: code ? null : (GROUP_ALIAS.exec(h.text)?.[0] ?? null),
+    alias: code ? null : (GROUP_ALIAS.exec(h.text)?.[0] ?? cnStage(h.text)),
     line: h.i + 1,
   };
+}
+
+// 分组别名不显示在页面上，只供文档内依赖引用匹配
+function cnStage(text) {
+  const m = CN_STAGE.exec(text);
+  if (!m) return null;
+  const v = (m[1] ?? m[2]).replace(/零/g, '〇').replace(/两/g, '二');
+  const d = (c) => '〇一二三四五六七八九'.indexOf(c);
+  // ponytail: 只认到九十九（「十」「十二」「二十」「二十三」），够分组用；超出的（一百、两千）不当别名，免得映射成别的阶段
+  if (!/^\d+$/.test(v) && !/^(?:[一二三四五六七八九]?十[一二三四五六七八九]?|[〇一二三四五六七八九])$/.test(v)) return null;
+  const [a, b] = v.split(/十/);
+  const n = /^\d+$/.test(v) ? Number(v) : b !== undefined ? (a ? d(a) : 1) * 10 + (b ? d(b) : 0) : d(v);
+  return `阶段 ${n}`;
 }
 
 function fromTaskLine(m) {
@@ -380,7 +403,10 @@ export async function loadProjectDocs(project, opts = {}) {
   const seen = new Set();
   for (const source of ordered) {
     const discover = DISCOVERERS[source.type];
-    if (!discover) continue; // 未知来源类型静默跳过
+    if (!discover) { // N9：未知来源类型（如把 md-dir 写成 md_dir）跳过并记诊断，不再静默
+      diagnostics.push({ message: msg`来源「${source.label}」的类型「${source.type}」不认识，已跳过；可用的类型：${joinList(Object.keys(DISCOVERERS))}` });
+      continue;
+    }
     // 每个工作区各自枚举，但一个 docId 只留在它归属的工作区里，任务键因此不随工作区变化。
     for (const ws of workspaces) {
       let found;

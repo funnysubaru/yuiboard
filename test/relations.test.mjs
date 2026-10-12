@@ -385,3 +385,12 @@ test('Mermaid 节点标签可用「タスク N」', () => {
   const d = doc1(`${jaBase}\n${F}mermaid\nflowchart TD\n  A[タスク 1] --> B[タスク 3]\n${F}\n`);
   assert.deepEqual([...depEdges(d, 'mermaid')], ['3<-1']);
 });
+
+test('N9 依赖写法：「依赖 1.1 + 1.2」收全；范围可写 1~3 / 1～3；版本号形态的 1.15.526~529 不是范围', () => {
+  const doc = parseTasksDoc('## 分组\n- [ ] 1 一\n- [ ] 1.1 一一\n- [ ] 1.2 一二\n- [ ] 2 二\n- [ ] 3 三\n'
+    + '- [ ] 4 四（依赖 1.1 + 1.2）\n- [ ] 5 五（依赖 1~3）\n- [ ] 6 六（依赖 1～3）\n- [ ] 7 七（依赖 1.15.526~529）\n', 'n9');
+  assert.deepEqual(at(doc, 7), ['4 <- 1.1,1.2']);
+  assert.deepEqual(at(doc, 8), ['5 <- 1+2+3']);
+  assert.deepEqual(at(doc, 9), ['6 <- 1+2+3']);
+  assert.deepEqual([at(doc, 10), doc.parse.unknownRelations], [[], []]);
+});

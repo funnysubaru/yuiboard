@@ -650,8 +650,8 @@ test('正文按 Markdown 显示：先请求原文，读到后只取任务行之�
   state.texts.set('rel', { lines: REL_LINES });
   const md = body(drawerOf('rel#2', state)[1]);
   assert.equal(md.className, 'md');
-  assert.deepEqual(texts(md.querySelectorAll('li')), ['这是 2 的正文', '<b>正文</b>第二行']);
-  assert.equal(md.querySelectorAll('b').length, 0, '原文里的 HTML 标签照字面显示，不变成节点');
+  assert.deepEqual(texts(md.querySelectorAll('li')), ['这是 2 的正文', '<b>正文</b>第二行此处未按 Markdown 渲染']);
+  assert.equal(md.querySelectorAll('b').length, 0, '原文里的 HTML 标签照字面显示，不变成节点，并标明未渲染（N12）');
 
   state.texts.set('rel', { error: '文档 x 已不存在' });
   assert.equal(body(drawerOf('rel#2', state)[1]).textContent, '原文读取失败：文档 x 已不存在');
@@ -2492,7 +2492,7 @@ test('正文 Markdown 子集：嵌套列表、复选框、行内代码 / 加粗 
   assert.match(ul.children[2].textContent, /与 本地$/);
   assert.equal(md.querySelector('blockquote').textContent, '注意：*.mjs 不是斜体');
   assert.equal(md.querySelector('pre').querySelector('code').textContent, 'const a = 1;\n');
-  assert.equal(md.querySelector('p').textContent, '普通段落');
+  assert.equal(md.children.at(-1).textContent, '普通段落');
 });
 
 test('任务抽屉标题按行内 Markdown 显示：** 与反引号不再原样露出', () => {
@@ -2501,6 +2501,186 @@ test('任务抽屉标题按行内 Markdown 显示：** 与反引号不再原样�
   const h2 = aside.querySelector('h2');
   assert.equal(h2.textContent, '0.1　fork 到 ext/skill/ —— ✅ 2026-06-27 完成');
   assert.deepEqual([h2.querySelector('code').textContent, h2.querySelector('b').textContent], ['ext/skill/', '2026-06-27 完成']);
+});
+
+// ---------- N12：Markdown 超出子集时不静默走样（A 常见写法补齐，B 其余照原文并标明、诊断报出） ----------
+import { mdText, mdUnrenderedLines } from '../web/md.mjs';
+
+const mdOne = (line) => mdBlock([line]).children[0];
+const RAW = '此处未按 Markdown 渲染';
+
+test('N12 行内斜体：只认下划线、两侧不贴字母数字；snake_case / __tests__ / *.mjs / cron */5 / 1.2~1.8 照字面', () => {
+  const p = mdOne('_Requirements: 4.1, 4.5_ 与 _验收: **甲** 通过_');
+  assert.deepEqual(texts(p.querySelectorAll('i')), ['Requirements: 4.1, 4.5', '验收: 甲 通过']);
+  assert.equal(p.textContent, 'Requirements: 4.1, 4.5 与 验收: 甲 通过');
+  assert.equal(p.querySelectorAll('i')[1].querySelector('b').textContent, '甲', '斜体里照样认加粗');
+  for (const s of ['snake_case_name 和 native_x_y', '__tests__ 与 __x__', '`*.mjs` 与 *.mjs 与 changePlan.*', 'cron */5 与 (R1.*, R2.4)', '1.2~1.8 与 a~b']) {
+    const el = mdOne(s);
+    assert.equal(el.querySelector('i'), null, s);
+    assert.equal(el.querySelector('b'), null, s);
+    assert.equal(el.querySelector('s'), null, s);
+    assert.equal(el.textContent, s.replaceAll('`', ''), s);
+    assert.equal(el.querySelector('.mdraw'), null, `${s} 是正常文字，不标未渲染`);
+  }
+  assert.equal(mdText('**甲** _乙_ `_丙_` snake_case'), '甲 乙 _丙_ snake_case', '纯文本同一解析：斜体去记号，代码里照字面');
+});
+
+test('N12 GFM 表格：表头、对齐、单元格行内 Markdown、\\| 字面竖线；包在可横向滚动的容器里', () => {
+  const md = mdBlock([
+    '- 对照表：',
+    '  | 名称 | 数量 | 说明 |',
+    '  |:-----|-----:|:----:|',
+    '  | `a` | 3 | **重点** 与 x \\| y |',
+    '  | 第二行 | 4 | 换行<br>写法 |',
+    '之后的段落',
+  ]);
+  const wrap = md.querySelector('.mdtable');
+  assert.ok(wrap, '表格包在 .mdtable 里');
+  assert.equal(wrap.parentNode.tagName, 'LI', '缩进在列表项下的表格挂在该项里');
+  assert.deepEqual(texts(wrap.querySelectorAll('th')), ['名称', '数量', '说明']);
+  assert.deepEqual(wrap.querySelectorAll('th').map((c) => c.style.getPropertyValue('text-align')), ['left', 'right', 'center']);
+  const rows = wrap.querySelector('tbody').querySelectorAll('tr');
+  assert.equal(rows.length, 2);
+  const cells = rows[0].querySelectorAll('td');
+  assert.equal(cells.length, 3, '\\| 不分列');
+  assert.equal(cells[0].querySelector('code').textContent, 'a');
+  assert.equal(cells[2].querySelector('b').textContent, '重点');
+  assert.equal(cells[2].textContent, '重点 与 x | y');
+  assert.equal(rows[1].querySelectorAll('td')[2].textContent, `换行<br>写法${RAW}`, '单元格里的 HTML 照原文并标明');
+  assert.equal(md.children.at(-1).textContent, '之后的段落');
+  // 没有分隔行 / 列数对不上就不是表格，照普通文字
+  assert.equal(mdBlock(['a | b', 'c | d']).querySelector('table'), null);
+  assert.equal(mdBlock(['| a | b |', '|---|']).querySelector('table'), null);
+  // 表格遇到新块就结束（PR #42 review）：后面的列表项 / 引用 / 围栏即使含 | 也交回外层，不吞进表格
+  const tbl = ['- 父项', '  | 说明 | 值 |', '  |---|---|', '  | data | x |'];
+  const next = mdBlock([...tbl, '- 另一项 | 带竖线']);
+  assert.deepEqual(texts(next.querySelector('ul').children), ['父项说明值datax', '另一项 | 带竖线'], '缩进退出的列表项另起一项');
+  assert.equal(next.querySelector('tbody').querySelectorAll('tr').length, 1);
+  const quote = mdBlock([...tbl, '  > 引用 | 带竖线']);
+  assert.equal(quote.querySelectorAll('blockquote').length, 1);
+  assert.equal(quote.querySelector('tbody').querySelectorAll('tr').length, 1);
+  const fenced = mdBlock([...tbl, '  ```', '  a | b', '  ```']);
+  assert.equal(fenced.querySelector('pre').textContent, 'a | b\n');
+  assert.equal(fenced.querySelector('tbody').querySelectorAll('tr').length, 1);
+  assert.equal(mdBlock([...tbl, '  - 子项 | 带竖线']).querySelector('tbody').querySelectorAll('tr').length, 1, '同缩进的子列表项也结束表格');
+  // 标题也结束表格（公开 PR review）：整行留在表格外，照原文并标明
+  const head = mdBlock(['| 名称 | 值 |', '|---|---|', '| 行 | x |', '##### 备注 | 细节']);
+  assert.equal(head.querySelector('tbody').querySelectorAll('tr').length, 1);
+  assert.equal(head.children.at(-1).textContent, `##### 备注 | 细节${RAW}`);
+});
+
+test('N12 引用：连续 > 行合成一个引用，里面按块排（列表）；列表项下缩进的 > 不再露出字面「>」', () => {
+  const md = mdBlock([
+    '> 第一行',
+    '> 第二行 _斜体_',
+    '> - 引用里的列表项',
+    '> - 第二项',
+    '',
+    '- 列表项',
+    '  > 挂在列表项下的引用',
+  ]);
+  const quotes = md.querySelectorAll('blockquote');
+  assert.equal(quotes.length, 2);
+  assert.equal(quotes[0].parentNode, md, '连续的 > 行只成一个引用');
+  assert.equal(quotes[0].querySelector('p').textContent, '第一行第二行 斜体');
+  assert.equal(quotes[0].querySelector('i').textContent, '斜体');
+  assert.deepEqual(texts(quotes[0].querySelector('ul').querySelectorAll('li')), ['引用里的列表项', '第二项']);
+  assert.equal(quotes[1].parentNode.tagName, 'LI');
+  assert.equal(quotes[1].textContent, '挂在列表项下的引用');
+  assert.ok(!md.textContent.includes('>'));
+});
+
+test('N12 代码块：保留围栏内的相对缩进，认 ~~~ 围栏；围栏里的写法不当 Markdown 也不标', () => {
+  const md = mdBlock([
+    '- 步骤',
+    '  ```js',
+    '  if (a) {',
+    '    run(*.mjs, _x_);',
+    '  }',
+    '  ```',
+    '~~~',
+    '<br> ![图](a.png)',
+    '~~~',
+  ]);
+  const [a, b] = md.querySelectorAll('pre');
+  assert.equal(a.textContent, 'if (a) {\n  run(*.mjs, _x_);\n}\n');
+  assert.equal(b.textContent, '<br> ![图](a.png)\n');
+  assert.equal(md.querySelector('.mdraw'), null);
+  assert.deepEqual(mdUnrenderedLines(['```', '<br>', '```', '~~~~', '# 不是标题', '~~~~']), []);
+});
+
+test('N12 认不了的写法照原文显示并标「此处未按 Markdown 渲染」；<v> / <id> / <docRef> 占位符与行内代码里的不标', () => {
+  const lines = [
+    '- 实测：',
+    '  #### 实测记录',
+    '  - 截图 ![界面](shot.png)',
+    '---',
+    '说明见脚注[^1]',
+    '[^1]: 脚注内容',
+    '第一行<br>第二行',
+    '用 <v>、<id>、<docRef> 占位，`<br>` 与 `![x](y)` 在代码里',
+    'a <= b 且 c > d',
+  ];
+  const md = mdBlock(lines);
+  const marked = md.querySelectorAll('.mdraw');
+  assert.ok(marked.every((m) => m.textContent === RAW));
+  const before = (m) => m.parentNode.childNodes[m.parentNode.childNodes.indexOf(m) - 1].textContent;
+  assert.deepEqual(marked.map(before),
+    ['#### 实测记录', '截图 ![界面](shot.png)', '---', '说明见脚注[^1]', '[^1]: 脚注内容', '第一行<br>第二行'],
+    '照原文显示：图片不变成链接、标题不吞掉 #、HTML 不变成节点');
+  assert.equal(md.children.at(-1).textContent, '说明见脚注[^1]' + RAW + '[^1]: 脚注内容' + RAW + '第一行<br>第二行' + RAW
+    + '用 <v>、<id>、<docRef> 占位，<br> 与 ![x](y) 在代码里a <= b 且 c > d', '其余照段落续行，占位符与比较号不标');
+  assert.equal(md.querySelector('a'), null);
+  assert.equal(md.querySelector('img'), null);
+  assert.equal(md.querySelector('hr'), null);
+  // 服务端诊断与页面标记同一口径
+  assert.deepEqual(mdUnrenderedLines(lines).map((x) => [x.i, x.kind]),
+    [[1, 'heading'], [2, 'image'], [3, 'hr'], [4, 'footnote'], [5, 'footnote'], [6, 'html']]);
+});
+
+test('N12 分组标题、文档标题走同一行内 Markdown：HTML 处渲染，悬停取纯文本', () => {
+  const docs = [
+    planDoc('n12', '# 计划 `core` 模块\n\n## **里程碑 M1**：_地基_\n\n- [ ] 1 第一项\n'),
+    { docId: 'ADR-0001-x', sourceType: 'adr-dir', sourceLabel: 'ADR', path: 'docs/adr/ADR-0001-x.md', workspaceId: 'repo',
+      archived: false, ...parseAdrDoc('# ADR-0001: 用 `h()` 建节点\n\n- **状态**: 已采纳\n', 'ADR-0001-x') },
+  ];
+  const board = computeBoard(docs, [], [], [], {}, { id: 'demo' }, NOW);
+  const state = () => ({ ...newState(NOW.getTime()), project: 'demo', onlyOpen: false });
+  const root = renderOverview(board, state());
+  const heads = root.querySelectorAll('.lv1');
+  const docHead = heads.find((x) => x.textContent.includes('n12'));
+  const adrHead = heads.find((x) => x.textContent.includes('ADR-0001'));
+  assert.equal(docHead.querySelector('.gname').getAttribute('title'), '计划 core 模块');
+  const grp = root.querySelector('.lv2').querySelector('.gname');
+  assert.equal(grp.textContent, '里程碑 M1：地基');
+  assert.equal(grp.querySelector('b').textContent, '里程碑 M1');
+  assert.equal(grp.querySelector('i').textContent, '地基');
+  assert.equal(adrHead.querySelector('.gname').querySelector('code').textContent, 'h()');
+  const gantt = renderGantt(board, state());
+  const g2 = gantt.querySelector('.g2').querySelector('.tt');
+  assert.deepEqual([g2.textContent, g2.getAttribute('title'), g2.querySelector('b').textContent], ['里程碑 M1：地基', '里程碑 M1：地基', '里程碑 M1']);
+  assert.equal(gantt.querySelector('.g1').querySelector('.tt').getAttribute('title'), '计划 core 模块');
+  const [, drawer] = renderDrawer(board, { ...state(), focus: 'n12#1' }, () => {});
+  const crumb = drawer.querySelector('.crumb');
+  assert.deepEqual([crumb.textContent, crumb.querySelector('b').textContent], ['n12 · 里程碑 M1：地基', '里程碑 M1']);
+});
+
+test('N12 诊断：正文里认不了的写法按「第 8 条 Markdown 写法」报出文档与行号，附改写建议；与抽屉标记一致', () => {
+  const lines = ['# 演示', '', '- [ ] 1 第一项', '  - 截图 ![图](a.png)', '  ```', '  <br> 在代码里', '  ```', '  用 <v> 占位',
+    '- [ ] 2 第二项', '  #### 记录', '  第一行<br>第二行'];
+  const doc = planDoc('n12-diag', lines.join('\n'));
+  assert.deepEqual(doc.parse.unrenderedMarkdown.map((x) => [x.line, x.kind]), [[4, 'image'], [10, 'heading'], [11, 'html']]);
+  const board = computeBoard([doc], [], [], [], {}, { id: 'demo' }, NOW);
+  assert.deepEqual(board.diagnostics.convention.map((x) => [x.rule, x.line]), [[8, 4], [8, 10], [8, 11]]);
+  const kv = kvOf(renderDiag(board, newState(NOW.getTime())));
+  assert.match(kv.get('不满足约定').textContent, /^3 处（Markdown 写法 3）/);
+  assert.deepEqual(texts(kv.get('不满足约定').querySelectorAll('li')), [
+    '第 8 条 Markdown 写法 · n12-diag 第 4 行：图片不按 Markdown 渲染，照原文显示；建议改成链接 [说明](地址)',
+    '第 8 条 Markdown 写法 · n12-diag 第 10 行：正文里的标题不按 Markdown 渲染，照原文显示；建议改成加粗行',
+    '第 8 条 Markdown 写法 · n12-diag 第 11 行：HTML 标签不按 Markdown 渲染，照原文显示；建议改成 Markdown 写法，或放进行内代码',
+  ]);
+  const marks = doc.tasks.map((x) => mdBlock(lines.slice(x.bodyRange[0], x.bodyRange[1])).querySelectorAll('.mdraw').length);
+  assert.deepEqual(marks, [1, 2]);
 });
 
 test('N6：各视图任务标题复用行内 Markdown，悬停 / SVG 去格式且保留代码内标记与原始数据', () => {

@@ -5,6 +5,7 @@ import { parseTasksDoc } from '../src/docs.mjs';
 import { computeBoard, classifyNext, linkPrs } from '../src/engine.mjs';
 import { extractRefs } from '../src/refs.mjs';
 import { normalizePr } from '../src/github.mjs';
+import { parseAdrDoc } from '../src/adr.mjs';
 
 const NOW = '2025-09-27T08:00:00.000Z';
 // PlanDoc 由 1.3 拼装；这里直接用 parseTasksDoc 的结果补上 docId / archived
@@ -463,10 +464,11 @@ test('PR 级冲突 h、i、n 各一正一反；只命中重复编号不说「不
   const b = inline('## 分组\n\n- [ ] 3 丙\n- [ ] 7 丁\n- [ ] 7 重复的丁\n', 'b');
   const types = (prs, cfg) => linkPrs([a, b], prs, cfg).conflicts.map((c) => [c.pr, c.type, c.detail]);
   // h：歧义、不存在、只命中重复编号；反例：唯一命中
-  assert.deepEqual(types([pr(1, { title: '任务 3' }), pr(2, { title: '任务 9' }), pr(3, { title: '任务 7' }), pr(4, { title: '任务 5' })]), [
+  assert.deepEqual(types([pr(1, { title: '任务 3' }), pr(2, { title: '任务 9' }), pr(3, { title: '任务 7' }), pr(4, { title: '任务 5' }), pr(5, { title: 'a 任务 7' })]), [
     [1, 'h', 'PR 标题里的「3」有歧义，可能是 a#3\u2063、b#3'],
     [2, 'h', 'PR 标题引用了不存在的任务：9'],
     [3, 'h', 'PR 标题里的「7」对应的编号在文档里重复出现，无法确定是哪一条'],
+    [5, 'h', 'PR 标题引用了不存在的任务：7'], // 写明了 a，b 里的重复编号不算
   ]);
   const ambiguous = linkPrs([a, b], [pr(1, { title: '任务 3' })]);
   assert.deepEqual([ambiguous.links, ambiguous.prs.get(1).tasks, ambiguous.prs.get(1).refIssues.length], [[], [], 1], '歧义 → 未关联');
@@ -825,18 +827,22 @@ test('诊断 · 不满足约定之处（任务 6.5）：文档按行号列出任
   const prs = [pr(1, { title: '任务 99' }), pr(2, { baseRefName: 'v2/collab', title: 'collab-m0-space-run#1.1' })];
   const b = computeBoard(docs, prs, [], [], {}, cfg, NOW);
   assert.deepEqual(b.diagnostics.convention.map((x) => [x.rule, x.docId ?? `#${x.pr}`, x.line ?? null]), [
-    [5, 'synthetic-inline', 31],
+    [5, 'synthetic-inline', 31], [8, 'synthetic-inline', 33], // N12：正文里的小标题照原文显示并报出
     [3, 'synthetic-inline', 47], // 悬空依赖 9.9
     [1, 'synthetic-inline', 48], [1, 'synthetic-inline', 49], // 编号 3 重复
+    [1, 'synthetic-inline', 50], // N9：parse.diagnostics（复选框「[-]」）也进不满足约定
     [1, 'synthetic-inline', 51],
     [3, 'collab-m0-space-run', 119], [3, 'collab-m0-space-run', 531], // design §3.4 表里的两条实物
+    [8, 'synthetic-headings', 21],
     [7, '#1', null], [7, '#2', null], [7, '#2', null],
   ]);
   const item = (rule, line) => b.diagnostics.convention.find((x) => x.rule === rule && x.line === line).detail;
   assert.equal(item(5, 31), '无法识别的耗时写法：- **预计耗时**：看情况再说');
   assert.equal(item(3, 47), '依赖了找不到的对象：9.9');
   assert.equal(item(3, 119), '未识别的依赖说法：最迟在任务 12.2 之前做完');
-  assert.equal(b.diagnostics.convention[7].detail, 'PR 标题引用了不存在的任务：99');
+  assert.equal(item(1, 50), '复选框「[-]」不是 [ ] / [x] / [~]，按未勾处理');
+  assert.equal(item(8, 33), '正文里的标题不按 Markdown 渲染，照原文显示；建议改成加粗行');
+  assert.equal(b.diagnostics.convention.find((x) => x.pr === 1).detail, 'PR 标题引用了不存在的任务：99');
   assert.equal(b.diagnostics.convention.filter((x) => x.pr === 2).length, b.conflicts.filter((c) => c.pr === 2 && c.type === 'n').length);
 });
 
@@ -910,6 +916,63 @@ test('「任务 N（部分）」：保留部分依据、不报 a；另有普通 
 
   const ticked = byNum(prBoard([d], [merged(10, { title: '任务 3（部分）' })], { 10: { state: 'synced' } }))['3'];
   assert.deepEqual([ticked.status, ticked.rule], ['done', '8.2-2'], '文档已勾且关联 PR 已合并同步才完成');
+});
+
+// ---- N9：写法不合约定时不静默误读 ----
+const N9_PLAN = '### 里程碑 M1：一\n- [ ] 1 甲\n- [ ] 2 乙\n### 里程碑 M2：二\n- [ ] 3 丙\n- [ ] 4 丁\n### 任务 9：混在任务行里的标题式任务\n';
+
+test('N9 部分标记：任务键、里程碑代号（整组）、不带括号、描述兜底都认；同段既有完整又有部分时按部分算', () => {
+  const d = inline(N9_PLAN, 'plan-a');
+  const r = linkPrs([d], [
+    pr(10, { title: 'fix: plan-a#1（部分）' }),
+    pr(11, { title: 'feat: M2（部分）' }),
+    pr(12, { title: 'feat: M1、任务 1（部分）' }),
+    pr(13, { title: 'fix: 修文案', body: '任务 3 部分' }),
+    pr(14, { title: 'fix: 任务 2，部分' }),
+    pr(15, { title: 'feat: Task 4 (part)' }),
+  ], { id: 'demo' });
+  const of = (n) => r.links.filter((l) => l.pr === n).map((l) => [l.taskKey.split('#')[1], !!l.partial]);
+  assert.deepEqual(of(10), [['1', true]]);
+  assert.deepEqual(of(11), [['3', true], ['4', true]], '代号带标记 = 整组都是部分交付');
+  assert.deepEqual(of(12), [['1', true], ['2', false]], '同一任务既有完整又有部分引用时按部分（保守）');
+  assert.deepEqual(of(13), [['3', true]], '描述兜底同样认');
+  assert.deepEqual(of(14), [['2', true]]);
+  assert.deepEqual(of(15), [['4', true]]);
+});
+
+test('N9 ADR 简称：ADR-0007#64 按分支线认到唯一那篇且标题优先；两篇同号时报歧义不猜', () => {
+  const adr = (docId, text, extra = {}) => ({ docId, archived: false, ...parseAdrDoc(text, docId), ...extra });
+  const docs = [adr('ADR-0007-sample', '# ADR-0007\n- [ ] 1 甲\n- [ ] 64 乙\n'),
+    adr('next:ADR-0007-sample', '# ADR-0007\n- [ ] 1 甲\n- [ ] 64 乙\n', { alias: 'ADR-0007-sample', workspaceId: 'next' })];
+  const cfg = { id: 'demo', repo: { path: '/ws/repo' }, branchLines: [
+    { id: 'personal', name: '个人版', base: 'main', docFilter: '^(?!next:)' },
+    { id: 'next', name: '新引擎线', base: 'next/x', docRef: 'next/x', docFiles: ['adr/ADR-0007-sample.md'], docFilter: '^next:' }] };
+  const r = linkPrs(docs, [
+    pr(20, { title: 'feat: ADR-0007#64（部分）', body: '背景：任务 1、任务 64 都还没做完' }),
+    pr(21, { title: 'feat: ADR-0007#1', baseRefName: 'next/x' }),
+    pr(22, { title: 'feat: ADR-0007#1', baseRefName: 'other' }),
+  ], cfg);
+  const of = (n) => r.links.filter((l) => l.pr === n).map((l) => [l.taskKey, l.source, !!l.partial]);
+  assert.deepEqual(of(20), [['ADR-0007-sample#64', 'title', true]], '标题里的简称生效，不再退到描述把 1、64 当完整交付');
+  assert.deepEqual(of(21), [['next:ADR-0007-sample#1', 'title', false]]);
+  assert.deepEqual(of(22), []);
+  assert.match(r.conflicts.find((c) => c.pr === 22).detail, /「ADR-0007#1」有歧义，可能是 ADR-0007-sample#1.*next:ADR-0007-sample#1/);
+});
+
+test('N9 像引用却对不上：报进「不满足约定」并给建议写法，不退到描述误读；PR#12、owner/repo#3 不算', () => {
+  const d = { ...inline(N9_PLAN, 'plan-a'), path: 'plan-a/tasks.md' };
+  const prs = [pr(30, { title: 'fix: Plan-A#1 修复', body: '任务 2' }), pr(31, { title: 'feat: M9 收尾' }),
+    pr(32, { title: '合并 PR#12 与 owner/repo-x#3 的修复', body: '任务 2' })];
+  const b = computeBoard([d], prs, [], [], {}, { id: 'demo' }, NOW);
+  assert.deepEqual(b.prs.filter((p) => p.tasks?.length).map((p) => [p.number, p.tasks]), [[32, ['plan-a#2']]]);
+  const conv = b.diagnostics.convention;
+  assert.deepEqual(conv.filter((x) => x.rule === 7).map((x) => [x.pr, x.detail]), [
+    [30, 'PR 标题里的「Plan-A#1」像任务引用，但对不上这条分支线的文档或里程碑代号；建议写成「plan-a#1」'],
+    [31, 'PR 标题里的「M9」像任务引用，但对不上这条分支线的文档或里程碑代号；建议写成「<spec 名>#<编号>」或文档里已有的里程碑代号'],
+  ]);
+  assert.deepEqual(conv.filter((x) => x.rule === 1).map((x) => [x.line, x.detail]), [
+    [7, '标题「任务 9：混在任务行里的标题式任务」像标题式任务，但本文档已有任务行，它不会被当成任务；建议改成「- [ ] 9 混在任务行里的标题式任务」'],
+  ]);
 });
 
 

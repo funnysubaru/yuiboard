@@ -6,6 +6,7 @@ import {
   STATUS_UI, CONFLICT_TEXT, RULE_TEXT, SESSION_SOURCE_TEXT, HTML_LANG,
   hashFor, refLabel, overallStats, checkItems, statusWhy, docLine, degradedBanners, docHasIssues, ago,
 } from '../web/app.mjs';
+import { mdText } from '../web/md.mjs'; // 一行显示的标题去掉 Markdown 记号，与网页悬停 / SVG 同一解析（N12）
 
 // Claude 设置的 language 是自由文本（japanese / 日本語 / Simplified Chinese / zh-CN …），区域是 ja-JP、zh-Hans-CN、ja_JP.UTF-8 这类。
 // 名称写在正则里：i18n 扫描器跳过正则字面量，不会把「日本語」「中文」当成漏包的界面文案。
@@ -95,8 +96,6 @@ const clip = (s, max) => (s == null || s.length <= max ? s : t`${s.slice(0, max)
 // STATUS_UI / CONFLICT_TEXT / RULE_TEXT 在 mod 环境里按中文求值（无 window），显示时再套 t() 得到当前语言
 // 状态只画图标（owner 2026-10-12 定的面板稿）：颜色由渲染端按 status 上
 const icon = (s) => (s ? STATUS_UI[s].icon : '⊘');
-// 一行显示的标题去掉 Markdown 记号：链接留文字，去掉加粗、删除线、行内代码的标记；单个 * _ 常见于路径，不动
-const plain = (s) => s.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*|__|~~|`/g, '');
 const BAR = 10; // 进度条格数
 // 行的状态色调（owner 2026-10-12 定的面板稿 v2）：进行中按会话活动分运行中 / 停滞，等待合并里已合并未 pull 的单列待同步。
 // 渲染端按它取前景色（主题键）与行底色
@@ -258,7 +257,7 @@ function focusCard({ summary, href, focus, toggled, now }) {
   const why = [statusWhy(v, task), unmet.length && t`在等：${unmet.map((u) => refLabel(u, task.docId)).join(t('、'))}`].filter(Boolean).join(' · ');
   const main = { key: first, path: pathOf(first), rows: [
     { key: `focus:${first}`, kind: 'focus', level: 1, status: v.status ?? 'void', tone: toneOf(v), highlight: true, href: href('overview', first),
-      texts: [icon(v.status), task.number, clip(plain(task.title), TITLE_MAX)] },
+      texts: [icon(v.status), task.number, clip(mdText(task.title), TITLE_MAX)] },
     { key: `focus:${first}:why`, kind: 'focusLine', level: 2, texts: [clip(why, NOTE_MAX)] },
   ] };
   const head = focus.recent
@@ -272,7 +271,7 @@ function focusCard({ summary, href, focus, toggled, now }) {
     const x = tasks.get(k);
     const s = views.get(k).status;
     return { key: k, path: [], rows: [{ key: `focus:${k}`, kind: 'focusItem', level: 2, status: s ?? 'void', tone: toneOf(views.get(k)), href: href('overview', k),
-      texts: [icon(s), x.number, clip(plain(x.title), TITLE_MAX)] }] };
+      texts: [icon(s), x.number, clip(mdText(x.title), TITLE_MAX)] }] };
   }) : [];
   return { focusHead, focusItems: [main, ...others], focusToggle };
 }
@@ -312,7 +311,7 @@ function treeRows({ summary, href, toggled, focus, lines }) {
       // 展开的子孙沿用最外层父任务的竖条与底色，连成一块（owner 2026-10-12）；图标、标题仍按自己的状态
       return [{ key: tkey, kind: 'task', level: level + depth, status: v?.status ?? 'void', tone: toneOf(v), href: href('overview', task.key),
         ...(root && { band: toneOf(views.get(root.key)) }),
-        texts: [icon(v?.status), task.number, clip(plain(task.title), TITLE_MAX)],
+        texts: [icon(v?.status), task.number, clip(mdText(task.title), TITLE_MAX)],
         ...(parents.has(task.key) && { toggle: tkey, open: isOpen(tkey) }), ...(task.key === primary && { highlight: true }) }];
     });
     // 分隔（面板稿 v2，owner 2026-10-12 晚）：最外层任务（没有 band）连同它展开的子孙算一块。块与块之间空一行（gap），
@@ -328,7 +327,7 @@ function treeRows({ summary, href, toggled, focus, lines }) {
       const gkey = `grp:${doc.docId}/${g.id}`;
       const gopen = isOpen(gkey);
       const gp = progress(st?.groups.find((x) => x.groupId === g.id));
-      rows.push({ key: gkey, kind: 'group', level: 1, texts: [clip(plain(g.title), TITLE_MAX)], ...(gp && { end: gp }), toggle: gkey, open: gopen });
+      rows.push({ key: gkey, kind: 'group', level: 1, texts: [clip(mdText(g.title), TITLE_MAX)], ...(gp && { end: gp }), toggle: gkey, open: gopen });
       if (gopen) rows.push(...apart(taskRows(list, 2)));
     }
   }
@@ -359,7 +358,7 @@ function checkRows({ summary, href, toggled }) {
       // 一行：图标、编号、对象 · 差在哪里（owner 2026-10-12 定的面板稿）；出处文件与行号在浏览器里看
       const detail = clip(tx(c.detail), NOTE_MAX);
       const s = task ? views.get(task.key)?.status : null;
-      const texts = task ? [icon(s), task.number, `${clip(plain(task.title), TITLE_MAX)} · ${detail}`]
+      const texts = task ? [icon(s), task.number, `${clip(mdText(task.title), TITLE_MAX)} · ${detail}`]
         : c.pr != null ? ['#', String(c.pr), detail]
         : ['◇', `${t`会话 ${clip(sessions.get(c.sessionId)?.title ?? c.sessionId, TITLE_MAX)}`} · ${detail}`];
       rows.push({ key: `${key}:${i}`, kind: 'checkItem', level: 1, ...(target && { href: href('check', target) }),

@@ -60,7 +60,7 @@ npx -p typescript tsc --noEmit -p tsconfig.json --allowJs
 
 Claude Code writes the plugin types to `.claude-plugin/types/` (git-ignored) when it loads the plugin, so run `claude plugin test .` once before `tsc`. Without `--allowJs`, `tsc` reports TS7016 for the `.mjs` modules the hooks import.
 
-When a change reaches the plugin (`hooks/`, `skills/`, or the `web/` modules the hooks import: `web/app.mjs`, `web/i18n*.mjs`), bump `version` in `.claude-plugin/plugin.json` (and `package.json` with it). `claude plugin update` compares only the version, so without a bump installed copies keep the old code.
+When a change reaches the plugin (`hooks/`, `skills/`, or the `web/` modules the hooks import: `web/app.mjs`, `web/md.mjs`, `web/i18n*.mjs`), bump `version` in `.claude-plugin/plugin.json` (and `package.json` with it). `claude plugin update` compares only the version, so without a bump installed copies keep the old code.
 
 **CI**: GitHub Actions runs `test-linux` and `test-macos` (Node version from `package.json`, full `npm test`, 10-minute limit) on every PR, drafts included, and on pushes to `main`.
 
@@ -74,7 +74,7 @@ Please keep these intact. A PR that breaks one of them can't be merged as it is.
   - GitHub is read only through `gh api graphql`, and YUIBoard never holds a token.
   - Only `src/store.mjs` writes to disk, and only to `cache/` and `data/`.
   - The one exception is `ops/devboard-ctl.mjs`, which also writes `devboard.config.json` (plus its `.bak`), `cache/devboard.pid` / `.log`, and the LaunchAgent plist or systemd unit that it created itself.
-- **Frontend safety.** Build DOM nodes only with `h()`, `textContent` and `setAttribute`; never `innerHTML`. Session excerpts and error messages go through `src/mask.mjs` first. Markdown in task text is rendered with `h()` too (`mdBlock` / `mdInline`), so HTML in docs shows up as literal text.
+- **Frontend safety.** Build DOM nodes only with `h()`, `textContent` and `setAttribute`; never `innerHTML`. Session excerpts and error messages go through `src/mask.mjs` first. Markdown in task text is rendered with `h()` too (`mdBlock` / `mdInline`, parsing in the DOM-free `web/md.mjs`), so HTML in docs shows up as literal text; forms outside the supported subset (CONVENTION rule 8) are shown as written with a marker and reported on the Diagnostics page.
 - **Three UI languages.** The Chinese source string is the translation key.
   - Wrap frontend text in `` t`…` `` (`web/i18n.mjs`).
   - Wrap server sentences that reach the page in `` msg`…` `` (`src/msg.mjs`). The frontend translates them with `tx()`.

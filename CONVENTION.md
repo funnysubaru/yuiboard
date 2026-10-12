@@ -2,7 +2,7 @@
 
 **English** · [中文](CONVENTION.zh-CN.md) · [日本語](CONVENTION.ja.md)
 
-YUIBoard reads planning documents in your repository (`tasks.md`, ADRs), GitHub PRs and local AI session logs, all read-only, and works out the status of every task. Write documents and PR titles following the seven rules below, and YUIBoard can match up tasks, relations, estimates and PRs.
+YUIBoard reads planning documents in your repository (`tasks.md`, ADRs), GitHub PRs and local AI session logs, all read-only, and works out the status of every task. Write documents and PR titles following the eight rules below, and YUIBoard can match up tasks, relations, estimates and PRs.
 
 - Each rule shows the **recommended form** first, then the **existing forms that are also accepted** (old documents don't need rewriting).
 - Not following a rule never makes anything fail: tasks still show up, whatever can be recognized is still used, and the "Convention issues" section of the Diagnostics page says which rule, which document and line, or which PR.
@@ -46,6 +46,8 @@ Only when a document has no task lines at all are headings starting with `Task N
 
 **中文 / 日本語**: task lines are written the same way (`- [ ] 1 搭骨架`); the number may be preceded by `タスク`; heading-style tasks also accept `### タスク 1：`.
 
+**Reported, not silently ignored**: in a document that already has task lines, headings like `### Task 1:` or `### 任务 1：` are not treated as tasks; the "Convention issues" section of the Diagnostics page suggests rewriting them as task lines. `- [ ] task 2` (lowercase) and `- [ ] ２ Title` (full-width digits) are also reported as malformed task lines.
+
 **plan / TODO directories**: in a directory configured as an `md-dir` source (e.g. `docs/superpowers/plans`, `03.PLAN`, `00.todolist`), each `.md` file at that level is one document named after the file, written as above. The superpowers style `### Task N:` + `- [ ] **Step N:**` is read as heading-style tasks, and a Task is done only when all its Steps are checked. A file with no task lines is shown as "Planning (no tasks yet)" and does not count as a convention issue; lines that look like task lines but are malformed are still reported.
 
 ## 2. Groups / milestones
@@ -64,7 +66,7 @@ Only when a document has no task lines at all are headings starting with `Task N
 
 **Also accepted**: group headings such as `## Phase 1` or `## Stage 2` can be referenced as group aliases (`depends on Phase 1`).
 
-**中文 / 日本語**: `### 里程碑 M1：…` / `### マイルストーン M1：…`; group aliases `阶段 1`, `フェーズ 1`.
+**中文 / 日本語**: `### 里程碑 M1：…` / `### マイルストーン M1：…`; group aliases `阶段 1`, `フェーズ 1` (Chinese numerals `## 阶段一`, `## 第二阶段` are the same aliases as `阶段 1`, `阶段 2`).
 
 ## 3. Dependencies / parallel / order
 
@@ -104,7 +106,7 @@ Relations are read in only two places: **inside the parentheses of a task title*
 - [ ] 11.5 Eleven-five
 ```
 
-- List separators: `,`, `and`, `&`, `/`. Ranges use an en dash or hyphen (`2.1–2.4`, `2.1-2.4`) and only expand to existing tasks with the same parent at the same level.
+- List separators: `,`, `and`, `&`, `/`, `+`. Ranges use an en dash or hyphen (`2.1–2.4`, `2.1-2.4`) or a tilde (`1~3`, `1～3`) and only expand to existing tasks with the same parent at the same level.
 - `2.x` or the parent number = all its subtasks; `<spec name>#<number>` refers to a task in another document.
 - Write external prerequisites as `needs P1` and register them in the prerequisites table at the top of the document. To clear one, strike out its ID (`~~P1~~`) or mark the item `resolved`.
 
@@ -273,18 +275,24 @@ feat: 任务 3 和 4 新增解析器
 feat: タスク 5 と 6 を実装
 ```
 
-**中文 / 日本語**: `任务 N`, `タスク N`; for partial work, `（部分）` / `（一部）` (`fix: 任务 13（部分）`, `fix: タスク 13（一部）`).
+**中文 / 日本語**: `任务 N`, `タスク N`; for partial work, `（部分）` / `（部分完成）` / `（一部）` or a trailing `部分` (`fix: 任务 13（部分）`, `fix: 任务 52 部分`, `fix: タスク 13（一部）`).
 
 **Bare numbers are not recognized**: the 3 in `fix: 3 bugs` is not taken as task 3.
+
+**ADR short names**: an ADR's document name is its whole file name (e.g. `ADR-0033-engine-upgrade`), but `ADR-0033#64` or `ADR-0033` in a title is also recognized, as long as the documents of the PR's branch line contain exactly one ADR numbered 0033. When there are several (duplicate numbers, or a same-named document from another branch line is also a candidate), it is reported as ambiguous; write the full document name.
+
+**Things that look like references but match nothing are reported**: if a task key in the title has the document name in the wrong case (`Devboard-MVP#3`) or an ADR number that does not exist (`ADR-0099#3`), or a code shaped like the document's milestone codes that does not exist (the document has `M0-c`, the title says `M0-z`), YUIBoard does not fall back to the description; it reports the problem under "Needs attention" and in the "Convention issues" section of the Diagnostics page, with a suggested rewrite. Any other `<name>#<number>` is usually an issue or PR in another repository (`other-vendor#127`, `PR#12`, `owner/repo#12`) and is not counted.
 
 **Without a task number in the title, every task number in the description counts as delivered**: YUIBoard falls back to the PR description only when the title has no task reference, and then every task number and milestone code in the description is treated as delivered by the PR — including background notes like "not done: task 13 still needs verification" or "groundwork for M0-c", and even syntax examples. So put delivered tasks in the title; once the title has a reference the description is ignored, and you can describe remaining work however you like. For PRs that really don't map to a task (syncing main, tweaking CI, editing rule documents), avoid task numbers in the description; if you do include them, unlink them by hand on the board.
 
 **A link is not full delivery**: a task counts as done only when it is checked in tasks.md and has no open or not-yet-synced PR. An unchecked task with a merged linked PR is "In progress"; the title, description, milestone or a manual link cannot replace the check in the document. When local sync status is unknown, the existing fallback still requires the checkbox; a checked task with no valid PR is still "Checked in doc only".
 
-**Partial work**: put `(partial)` right after the task number to record that the PR delivers part of it, keeping the evidence and label. The marker applies to the whole list (`Tasks 13 and 14 (partial)` marks both). To mark items one by one, each needs `Task`: `Task 13 (partial), Task 14 (partial)`; `Task 13 (partial), 14 (partial)` only recognizes 13. Partial PRs are also checked for open / not-yet-synced state; adding ordinary linked PRs or switching to a manual link does not make an unchecked task done.
+**Partial work**: put a partial marker right after the reference to record that the PR delivers part of it, keeping the evidence and label. Accepted markers: `(partial)`, `(part)`, `（部分）` / `(部分)`, `（部分完成）`, `（一部）`, and a bare `部分` with no text after it (`任务 52 部分`, `任务 99，部分`; `任务 1，部分页面改版` does not count). The marker applies to the reference right before it: a `Task N` list as a whole (`Tasks 13 and 14 (partial)` marks both); a task key only itself (`devboard-mvp#3.4 (partial)`); a milestone code marks every task that code expands to (`M0-c (partial)`). To mark items one by one, each needs `Task`: `Task 13 (partial), Task 14 (partial)`; `Task 13 (partial), 14 (partial)` only recognizes 13. When the same place (title or description) references a task both fully and partially, it counts as partial. The same markers apply when the description is used as the fallback. Partial PRs are also checked for open / not-yet-synced state; adding ordinary linked PRs or switching to a manual link does not make an unchecked task done.
 
 ```text
 [V2] fix(api): Acceptance probe (Task 13 (partial))
+fix: devboard-mvp#3.4 (partial)
+[V2] feat(api): M0-c (partial)
 ```
 
 **Optional extras**: a line `Task: <spec name>#<number>` in the PR description; a branch name containing `task-<number>` or a milestone code. The branch name is used only when neither the title nor the description has a reference.
@@ -297,3 +305,11 @@ Task: devboard-mvp#2.5b
 devboard/task-1.2
 feature-m0c
 ```
+
+## 8. Markdown in task bodies
+
+YUIBoard displays task titles, group headings and task bodies with a subset of Markdown. HTML in the document is never turned into elements.
+
+- **Rendered**: nested lists (`-`, `*`, `+`, `1.`) with `[ ]` / `[x]` / `[~]` checkboxes; fenced code blocks (`` ``` `` or `~~~`); block quotes (consecutive `>` lines, which may contain lists); GFM tables (header row, `|---|` separator with `:` for alignment, `\|` for a literal pipe); inline `` `code` ``, `**bold**`, `~~strikethrough~~`, `_italic_`, and `[text](https://…)` links (other links show only their text).
+- **Kept as written, not flagged**: a single `*` or `~` (`*.mjs`, `cron */5`, `1.2~1.8` are wildcards and ranges, not italic or strikethrough), underscores inside words (`snake_case`, `__tests__`), and placeholders such as `<id>` or `<docRef>`. Nothing inside code is interpreted.
+- **Shown as written and marked "not rendered as Markdown here"**: headings inside a task body (such as an indented `#### Notes`), horizontal rules, images `![…](…)`, footnotes `[^1]`, and HTML tags such as `<br>`, `<details>` or `<img>`. The Diagnostics page lists each one under rule 8 with its document and line. Suggested rewrites: a bold line instead of a heading, a blank line instead of a rule, a link `[text](url)` instead of an image, the note in the text or in parentheses instead of a footnote, and Markdown or inline code instead of HTML.

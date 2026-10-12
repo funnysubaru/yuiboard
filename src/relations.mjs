@@ -10,12 +10,13 @@ const DEFAULT_PREREQ_ID = '^~*P\\d+~*$';
 const VERSION = /^\d+\.\d+\.\d+/;
 const RE_KEY = new RegExp(`([A-Za-z0-9][\\w.-]*)#(${NUM})(?![A-Za-z0-9])`, 'y');
 const RE_CHILDREN = new RegExp(`(${NUM})\\.x(?![A-Za-z0-9])`, 'y');
-// 范围横线另认日文的波浪线 〜（U+301C）；全角 ～ 中文里未必是范围，不认。
-const RE_RANGE = new RegExp(`(${NUM})\\s*[–—〜-]\\s*(${NUM})(?![A-Za-z0-9])`, 'y');
+// 范围横线另认日文的波浪线 〜（U+301C）；N9 起也认 ~ 与全角 ～（「依赖 1~3」「依赖 1～3」）：这里两侧都得是编号，
+// 版本号形态照旧不算（1.15.526~529）。
+const RE_RANGE = new RegExp(`(${NUM})\\s*[–—〜～~-]\\s*(${NUM})(?![A-Za-z0-9])`, 'y');
 const RE_NUM = new RegExp(`(${NUM})(?![A-Za-z0-9])`, 'y');
-// 英文 and / &（含牛津逗号「1, 2, and 3」）、日文「と」也是列表分隔；分隔符后面不是 Ref 时不吞，
-// 所以「4 と並行」的「と」照样留给并行模式。
-const RE_SEP = /\s*(?:、|，|,\s*and(?![A-Za-z])|,|\/|和|及|与|&|(?<![A-Za-z])and(?![A-Za-z])|と)\s*/y;
+// 英文 and / &（含牛津逗号「1, 2, and 3」）、日文「と」、N9 起的 +（「依赖 1.1 + 1.2」）也是列表分隔；
+// 分隔符后面不是 Ref 时不吞，所以「4 と並行」的「と」照样留给并行模式。
+const RE_SEP = /\s*(?:、|，|,\s*and(?![A-Za-z])|,|\/|和|及|与|&|\+|(?<![A-Za-z])and(?![A-Za-z])|と)\s*/y;
 const RE_ARROW = /\s*→\s*/y;
 // 编号前口语化的「任务」二字或 task / tasks / タスク（「依赖任务 1、2」「与任务 3/4 并行」「任务 1、任务 3」「依赖 task 16」）。
 const RE_TASK_WORD = /(?:任务|タスク|[Tt]asks?)\s*/y;
@@ -232,7 +233,7 @@ function parseChain(s, i, ctx) {
 
 // 引用可以开始的位置：前一个字符不是编号的一部分（免得从「8.1–8.5」中间的「1–8.5」读起）。
 function* starts(s) {
-  for (let i = 0; i < s.length; i++) if (i === 0 || !/[A-Za-z0-9.#\-–—〜]/.test(s[i - 1])) yield i;
+  for (let i = 0; i < s.length; i++) if (i === 0 || !/[A-Za-z0-9.#\-–—〜～~]/.test(s[i - 1])) yield i;
 }
 
 // 找第一个紧跟着 suffix 的引用列表 / 链。

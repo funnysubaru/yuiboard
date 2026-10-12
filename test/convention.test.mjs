@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseTasksDoc } from '../src/docs.mjs';
 import { extractRefs, extractBranchRefs } from '../src/refs.mjs';
+import { mdParse, mdUnrendered } from '../web/md.mjs';
 
 // 顶层围栏代码块（外层可用更长的围栏包住内层 ```mermaid）→ [{lang, text}]
 function blocks(md) {
@@ -41,11 +42,11 @@ const NAMES = ['任务行', '兼容的任务行', '标题式任务', '里程碑'
 const byName = (name) => ZH.docs[NAMES.indexOf(name)].doc;
 const sig = (doc) => doc.relations.map((r) => `${r.kind} ${r.via} ${[r.subjects, r.objects].map((x) => x.flatMap((o) => o.keys.length ? o.keys : [o.id ?? o.raw]).join('+')).join(' <- ')}`);
 
-test('三语约定文档：七条都在，示例块齐全', () => {
+test('三语约定文档：八条都在，示例块齐全', () => {
   assert.deepEqual(ZH.docs.map((d) => d.name), NAMES);
   for (const { file, MD, docs, lines } of ALL_LANGS) {
     const heads = [...MD.matchAll(/^## (\d)\. /gm)].map((m) => m[1]);
-    assert.deepEqual(heads, ['1', '2', '3', '4', '5', '6', '7'], file);
+    assert.deepEqual(heads, ['1', '2', '3', '4', '5', '6', '7', '8'], file);
     assert.equal(docs.length, NAMES.length, file);
     assert.ok(docs.every((d) => d.name), `${file} 每个示例块要有标题行`);
     assert.ok(lines('text').length >= 5 && lines('branch').length >= 2, file);
@@ -116,6 +117,8 @@ test('PR 标题与描述：示例每行都认出任务号 / 代号 / 任务键�
     for (const t of lines('text')) {
       const r = extractRefs(t, opts);
       assert.ok(r.keys.length + r.nums.length + r.codes.length > 0, `${file} ${t}`);
+      // N9：带部分标记的示例（任务号、任务键、代号）都要认出标记
+      if (/部分|一部|\(partial\)/.test(t)) assert.ok(r.partial.length > 0, `${file} 部分标记：${t}`);
     }
     for (const b of lines('branch')) {
       const r = extractBranchRefs(b, { knownCodes: opts.knownCodes });
@@ -134,5 +137,18 @@ test('英 / 日版示例逐块翻译：解析结果与中文版同位置的示�
   });
   for (const { file, docs } of ALL_LANGS.slice(1)) {
     docs.forEach(({ name, doc }, i) => assert.deepEqual(sum(doc), sum(ZH.docs[i].doc), `${file} 第 ${i + 1} 个示例「${name}」对应中文版「${NAMES[i]}」`));
+  }
+});
+
+test('第 8 条 Markdown 子集：「照原文、不提示」的例子不被解析也不标，「标明未渲染」的例子都会标（与 web/md.mjs 同口径）', () => {
+  for (const { file, MD } of ALL_LANGS) {
+    const bullets = MD.slice(MD.indexOf('\n## 8. ')).split('\n- ').slice(1);
+    const codes = (b) => [...b.matchAll(/(?<!`)`([^`]+)`(?!`)/g)].map((m) => m[1]);
+    const kept = codes(bullets[1]);
+    assert.ok(kept.length >= 6, file);
+    for (const c of kept) assert.deepEqual([mdParse(c), mdUnrendered(c)], [[c], null], `${file}：${c}`);
+    const marked = codes(bullets[2]).filter((c) => /^(#|!|\[\^|<)/.test(c));
+    assert.equal(marked.length, 6, file);
+    for (const c of marked) assert.ok(mdUnrendered(c), `${file}：${c}`);
   }
 });
