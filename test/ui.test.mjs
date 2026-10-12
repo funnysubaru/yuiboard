@@ -2563,6 +2563,10 @@ test('N12 GFM 表格：表头、对齐、单元格行内 Markdown、\\| 字面�
   assert.equal(fenced.querySelector('pre').textContent, 'a | b\n');
   assert.equal(fenced.querySelector('tbody').querySelectorAll('tr').length, 1);
   assert.equal(mdBlock([...tbl, '  - 子项 | 带竖线']).querySelector('tbody').querySelectorAll('tr').length, 1, '同缩进的子列表项也结束表格');
+  // 标题也结束表格（公开 PR review）：整行留在表格外，照原文并标明
+  const head = mdBlock(['| 名称 | 值 |', '|---|---|', '| 行 | x |', '##### 备注 | 细节']);
+  assert.equal(head.querySelector('tbody').querySelectorAll('tr').length, 1);
+  assert.equal(head.children.at(-1).textContent, `##### 备注 | 细节${RAW}`);
 });
 
 test('N12 引用：连续 > 行合成一个引用，里面按块排（列表）；列表项下缩进的 > 不再露出字面「>」', () => {

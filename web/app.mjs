@@ -846,9 +846,9 @@ export function mdBlock(lines, root = h('div', { class: 'md' })) {
         mdUnrendered(c) ? mdRaw(c) : mdInline(c))));
       let j = i + 2;
       const body = [];
-      // 表格行到空行、缩进退出、或新块（列表项 / 引用 / 围栏）为止，那一行交回外层（GFM：其他块开始时表格结束）
+      // 表格行到空行、缩进退出、或新块（列表项 / 引用 / 围栏 / 标题）为止，那一行交回外层（GFM：其他块开始时表格结束）
       const more = (l) => l.includes('|') && l.trim() && l.length - l.trimStart().length >= indent
-        && !l.trim().startsWith('>') && !MD_FENCE.test(l) && !MD_ITEM.test(l);
+        && !/^(?:>|#{1,6}\s)/.test(l.trim()) && !MD_FENCE.test(l) && !MD_ITEM.test(l);
       while (j < lines.length && more(lines[j])) body.push(row('td', mdCells(lines[j++])));
       block(indent, h('div', { class: 'mdtable' }, h('table', {}, h('thead', {}, row('th', head)), body.length ? h('tbody', {}, body) : null)));
       i = j - 1;
