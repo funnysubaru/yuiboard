@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    # draft PR 不跑 CI（owner 2026-10-12，参考 Yuiclaw）：review 期间的修复不重复消耗，`gh pr ready` 后再跑。
+    # draft PR 不跑 CI（owner 2026-10-12）：review 期间的修复不重复消耗，`gh pr ready` 后再跑。
     # draft 期间 required check 显示等待中是正常的，GitHub 本来就不能合并 draft。
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: test-${{ matrix.platform }}
