@@ -155,6 +155,7 @@ node ops/devboard-ctl.mjs revert <revision>                # その revision を
   ```
 
 - サービスはこのディレクトリにある現在のコードを実行します。ブランチを切り替えたり `src/` を変更したりしたら再起動してください。`web/` だけの変更ならブラウザの強制再読み込みで十分です。
+- 新しいバージョンに更新するには、このディレクトリで `git pull` し、`node ops/devboard-ctl.mjs up`（または上の `launchctl kickstart -k` / `systemctl --user restart`）でサービスを再起動します。Claude Code のペインを使っている場合は、続けて `claude plugin update yuiboard@yuiboard` を実行し、プラグインとサービスのバージョンをそろえてください。
 
 </details>
 

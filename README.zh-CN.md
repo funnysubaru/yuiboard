@@ -155,6 +155,7 @@ node ops/devboard-ctl.mjs revert <revision>                # 撤销返回该 rev
   ```
 
 - 服务跑的是本目录当前的代码。切分支或改了 `src/` 后要重启；只改 `web/` 时浏览器强制刷新即可。
+- 升级到新版本：在本目录 `git pull`，用 `node ops/devboard-ctl.mjs up` 重启服务（也可以用上面的 `launchctl kickstart -k` / `systemctl --user restart`）；用了 Claude Code 面板的话，再运行 `claude plugin update yuiboard@yuiboard`，让插件与服务保持同一版本。
 
 </details>
 

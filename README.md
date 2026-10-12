@@ -155,6 +155,7 @@ The service is reachable at http://devboard.localhost:4317/ as well as 127.0.0.1
   ```
 
 - The service runs the code currently in this directory. After you switch branches or change `src/`, restart it. If you change only `web/`, a hard refresh in the browser is enough.
+- To update to a new release: run `git pull` in this directory, restart the service with `node ops/devboard-ctl.mjs up` (or `launchctl kickstart -k` / `systemctl --user restart` as above), then, if you use the Claude Code pane, run `claude plugin update yuiboard@yuiboard` so the plugin matches the service.
 
 </details>
 
