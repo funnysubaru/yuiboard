@@ -9,6 +9,8 @@ YUIBoard is a local, read-only progress board for AI-assisted development. It re
 - [CONVENTION.md](CONVENTION.md): how watched repositories should write docs and PR titles. Translations: `CONVENTION.zh-CN.md`, `CONVENTION.ja.md`. `test/convention.test.mjs` compares the examples in all three, block by block.
 - `test/fixtures/ui-mockup.html`: the static UI mockup the interface was built from (fictional data). `test/ui.test.mjs` checks colors, status icons, navigation and wording against it.
 
+- The Claude Code plugin (mod): the repository root is the plugin (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/`). `hooks/model.mjs` is the pure pane logic, tested by `npm test`; `hooks/register.tsx` holds the hooks and the pane, tested by `claude plugin test .` (not in CI). On the server side it adds only `src/summary.mjs`.
+
 The trilingual docs move together: if you change one README or CONVENTION, update the other two in the same PR.
 
 ## Hard constraints
@@ -24,6 +26,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
   - git runs only the allow-listed read-only commands in `GIT_ALLOWED` (`src/docs.mjs`), with `GIT_OPTIONAL_LOCKS=0` and without inherited `GIT_*` variables (`gitEnv()` in `src/config.mjs`; otherwise `GIT_DIR` and friends override `-C`).
   - GitHub is read only through `gh api graphql`, and YUIBoard holds no token.
   - Only `src/store.mjs` writes to disk, and only to `cache/` and `data/`.
+  - The Claude Code mod reads the local service only through `GET /api/projects/:id/summary` (the mod's `$.http.fetch` caps responses at 4 MiB, which the full board exceeds) and writes nothing.
   - The exception is `ops/devboard-ctl.mjs`, which also writes:
     - `devboard.config.json`: `up` rewrites `server.port`, and `save` / `remove` back the file up to `.bak` first;
     - `cache/devboard.pid` and `cache/devboard.log`;
@@ -58,6 +61,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
   - "Task N (partial)" keeps the evidence and the tag. Like any other link, it can't replace the checkbox, and partial PRs also go through the open / not-synced checks.
 - **Linking sessions to tasks is deliberately strict across documents.** A bare task number counts only for docs that already appear in the session's context, and a bare number in a hand-off message doesn't link anything. Don't loosen this; doing so marks same-numbered tasks in other specs as in progress.
 - **Branch lines are assigned by a PR's base branch** (plus `titlePrefix` / `labels`). Users switch lines from the top bar. Don't add a config that hard-limits counting to one line; this was tried and reverted.
+- **Claude Code subagents count separately.** When a subagent's log has an `agent-*.meta.json` with the `toolUseId` of the call that dispatched it, it runs as its own lane: the tasks dispatched to it keep their activity from its own records and don't change the main thread's focus. A dispatch that names no task freezes the main thread's focus at that moment for the lane. Branch signals are per lane too. Subagents without meta merge into the main thread as before.
 - **Codex sessions** belong to a project only by the cwd they started in. Sub-agents merge into their parent session. Only root-session `UserMessage` entries count as human input; heartbeats and answers to Codex's own questions don't. Summaries may include masked public assistant output.
 - **Token-scope banner**: users can dismiss it with "Got it", which hides that exact text in that browser until the text changes. Diagnostics always shows it. Never touch credentials or hide it on the server.
 - The "Needs attention" nav count equals the total in that view, "checked in doc only" included, and matches "All types (N)". Parent tasks can fold their children and are expanded by default.
@@ -66,6 +70,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
   - Re-onboarding the same repository (matched by normalized path) keeps its id and existing fields.
   - `md-dir` sources: docs without task lines show as "Planning", and they give way to other sources with the same name.
   - `repo.github` is optional. Without it no PR cache is read and no old board is replayed.
+- **Claude Code mod.** The repository root is the plugin, because a mod can't import files outside its plugin directory or follow symlinks; that's why `skills/devboard-add-project` comes with the plugin. The pane opens by itself once per session when it can match the session to a project, and stays closed after the user closes it. Status hues match the web page. Task numbers are the links to the web page; nothing appears only on hover. The main task is the one with the latest activity; on a tie, prefer tasks the session named, then unchecked ones, then tasks without subtasks, then document order.
 - In the overview task tree, doc, group and task text can be selected and copied but not edited. Clicking text or empty row space doesn't open the drawer; the "Details" button at the end of the row does. Docs, groups and parent tasks expand only via their fold triangle.
 
 ## Redraw behavior (when changing `main()` in `web/app.mjs`)
@@ -82,6 +87,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
 
 - `node src/server.mjs` reads `devboard.config.json` (copy it from `devboard.config.example.json`; it's git-ignored) and serves http://127.0.0.1:4317 by default. If the port is taken, an instance is probably already running.
 - After changing `src/` or the config, restart. After changing only `web/`, a hard refresh is enough.
+- Developing the mod: load the checkout with `claude --plugin-dir <this directory>` or `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, and point the plugin's `url` at a service running the same checkout. A running session does not reload the mod when plugin files change; change a value in `pluginConfigs["yuiboard@inline"].options` (for example add or remove a trailing `/` on `url`) and leave it changed, or start a new session.
 - `npm run demo` (`ops/demo.mjs`) builds a fictional project (git repo, docs, PRs replayed by `fake-gh`, a Claude Code session) in a `yuiboard-demo-*` system temp directory and serves it in-process from port 4318 up; cache and data live there too. Ctrl+C stops it and deletes the directory. `test/demo.test.mjs` checks the demo states with a fixed "now".
 - Docs, sessions and manual links refresh every 5 s; GitHub every `githubRefreshMinutes` (default 5, minimum 2). YUIBoard never calls an AI API.
 - For checks that write data or simulate failures (manual links, going offline), copy the whole directory and run it on another port. Never touch the user's running instance or its `data/`.

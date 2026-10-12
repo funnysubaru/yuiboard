@@ -31,6 +31,8 @@ npm test
 | `ops/devboard-ctl.mjs` | Service install / restart and config editing used by the skill |
 | `ops/demo.mjs` | `npm run demo`: builds a fictional project (git repo, docs, PRs for the fake `gh`, a Claude Code session) in the OS temp dir and serves it; nothing is written to this directory |
 | `skills/devboard-add-project/` | The AI skill that onboards a repository |
+| `.claude-plugin/`, `hooks/` | The Claude Code plugin (mod): `hooks/model.mjs` is the pure pane logic (tested by `npm test`), `hooks/register.tsx` the hooks and pane; the repository root is the plugin, so it can import `web/` |
+| `src/summary.mjs` | `GET /api/projects/:id/summary`: the slice of the board the mod reads (the full board is over the mod's 4 MiB fetch limit) |
 | `test/` | `node:test` suites and fixtures (all fictional data) |
 
 ## Tests
@@ -47,6 +49,16 @@ npm test    # = node --test --test-timeout=60000 "test/*.test.mjs"
 - `test/main.test.mjs` drives the real frontend `main()` on a fake DOM. `test/ui.test.mjs` renders each view.
 - `test/i18n.test.mjs` fails if UI text isn't wrapped for translation or a translation is missing (see below).
 - To also parse every spec and ADR of a real repository, set `DEVBOARD_REAL_REPO=<path>`.
+
+**Claude Code plugin** (not in CI, because it needs Claude Code installed; tested with 2.1.293–2.1.296):
+
+```sh
+claude plugin test .         # hooks/*.test.ts: hooks and pane, terminal and desktop
+claude plugin validate .     # manifest, hooks, skills
+npx -p typescript tsc --noEmit -p tsconfig.json --allowJs
+```
+
+Claude Code writes the plugin types to `.claude-plugin/types/` (git-ignored) when it loads the plugin, so run `claude plugin test .` once before `tsc`. Without `--allowJs`, `tsc` reports TS7016 for the `.mjs` modules the hooks import.
 
 **CI**: GitHub Actions runs `test-linux` and `test-macos` (Node version from `package.json`, full `npm test`, 10-minute limit) on every PR, drafts included, and on pushes to `main`.
 
@@ -110,3 +122,9 @@ Run these against a real repository before a release or after a large change. Th
     - The "Waiting on me" column says the project has no GitHub, so it contains no PRs.
     - The Diagnostics GitHub section says it is not configured.
     - "↻ Refresh" refreshes only docs and sessions, and tasks are only ever not started, in progress or done.
+15. **Claude Code mod** (see README "Watch it inside Claude Code"), once in a terminal and once in the desktop app, with the plugin's `url` pointing at a service running this checkout:
+    - In a new session in a watched repository, name a task ("`<doc>` task N"). The pane opens by itself, and within about 10 s the card shows the task, the tree expands to it and the row is bold (with an orange outline in the desktop app).
+    - Name another task: the card and the highlight follow. After `/clear`, the pane says the session has no linked task until you name one again.
+    - Switch Overview, Needs attention and Diagnostics. "Open in browser" and a task number open the web page.
+    - Stop the service: the pane shows that it can't connect; start it again and the message goes away within about 5 s.
+    - Close the pane, send a message and wait 10 s: it doesn't reopen. `/yuiboard` opens it again.

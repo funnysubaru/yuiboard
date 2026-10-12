@@ -1,7 +1,7 @@
 // Claude Code 会话来源（design §3.7）：定位记录目录、判定会话是否属于本项目、按字节偏移增量读。
 // 只读：只用 readdir / stat / 只读打开，不写、不加锁、不在会话目录里建文件（需求 16.6）。
 // 产出会话的元数据（文件、cwd、首末时间、标题、坏行数）与证据信号（design §3.7.4：prompt / dispatch / edit / touch /
-// pr-link / branch）。只存元数据与遮蔽后的短片段，缓存与 SessionRecord 都不含对话正文（需求 14.6、16.6）。
+// pr-link / branch / agent，子 agent 的信号带 lane）。只存元数据与遮蔽后的短片段，缓存与 SessionRecord 都不含对话正文（需求 14.6、16.6）。
 import { readdir, stat, open, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,7 +10,7 @@ import { extractRefs } from '../refs.mjs';
 import { mask } from '../mask.mjs';
 import { msg } from '../msg.mjs';
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 4;
 const TITLE_MAX = 60;
 const SNIPPET_MAX = 60; // 信号片段
 const SUMMARY_MAX = 120; // 最后一条消息摘要（design §3.7.4）
@@ -194,10 +194,13 @@ async function readFiles(state, projDir, dirName, stats, diag, scopeInfo) {
       continue;
     }
     const isMain = !rel.includes('/');
+    // 子 agent 各算各的：旁边的 agent-*.meta.json 记着派它的那次 Agent 调用（toolUseId），它的记录只续这次派活的焦点。
+    // ponytail: meta 晚于记录写出时，之前读过的记录仍按旧规则并入主线；meta 一出现，之后的记录就各算各的。
+    if (!isMain && typeof f.lane !== 'string') f.lane = await laneOf(path.join(projDir, rel));
     try {
       f.offset = await readLines(path.join(projDir, rel), f.offset, st.size, (line) => {
         f.lines++;
-        if (!applyLine(state, line, { file: key, line: f.lines, isMain }, scopeInfo)) f.broken++;
+        if (!applyLine(state, line, { file: key, line: f.lines, isMain, f }, scopeInfo)) f.broken++;
       });
       Object.assign(f, { size: st.size, mtimeMs: st.mtimeMs, ino: st.ino });
     } catch (e) {
@@ -208,6 +211,15 @@ async function readFiles(state, projDir, dirName, stats, diag, scopeInfo) {
   }
   // 已消失的子 agent 文件不再列出。
   for (const key of Object.keys(state.files)) if (!(key.slice(dirName.length + 1) in stats)) delete state.files[key];
+}
+
+async function laneOf(jsonlPath) {
+  try {
+    const id = JSON.parse(await readFile(jsonlPath.replace(/\.jsonl$/, '.meta.json'), 'utf8'))?.toolUseId;
+    return typeof id === 'string' && id ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 // 一行记录 → 累加元数据与信号。返回 false 表示坏行（跳过、计数，需求 14.9）。
@@ -253,17 +265,23 @@ function applyLine(state, raw, pos, scopeInfo) {
     if (content || branch) state.partial = true;
     return true;
   }
+  const lane = pos.f?.lane ?? null;
+  // 认得出派活的子 agent：第一条带时间的记录记一个 agent 信号，它之后的记录都续在这一路上，不再续主线的焦点段
+  if (lane && at && !pos.f.started) {
+    pos.f.started = true;
+    addSignal(state, { kind: 'agent', at, file: pos.file, line: pos.line, lane });
+  }
   if (content) {
     try {
       obj = JSON.parse(line);
     } catch {
       return false;
     }
-    if (at) extractSignals(state, obj, { at, file: pos.file, line: pos.line }, isMain, scopeInfo);
+    if (at) extractSignals(state, obj, { at, file: pos.file, line: pos.line, ...(lane && { lane }) }, isMain, scopeInfo);
   }
   if (at) {
-    noteBranch(state, content ? obj.gitBranch : branch, { at, file: pos.file, line: pos.line });
-    extendUntil(state, at);
+    noteBranch(state, content ? obj.gitBranch : branch, { at, file: pos.file, line: pos.line }, pos.f);
+    extendUntil(state, at, lane);
   }
   return true;
 }
@@ -306,7 +324,7 @@ function extractSignals(state, obj, pos, isMain, { refOpts, anchors, repo }) {
     const flat = text.slice(0, AI_TEXT_PEEK).replace(/\s+/g, ' ').trim();
     if (flat) noteLastMsg(state, pos.at, mask(flat));
   }
-  for (const b of blocks) if (b?.type === 'tool_use' && b.input && typeof b.input === 'object') toolSignals(state, b.name, b.input, pos, refOpts, anchors);
+  for (const b of blocks) if (b?.type === 'tool_use' && b.input && typeof b.input === 'object') toolSignals(state, b, pos, refOpts, anchors);
 }
 
 // 人发的消息：非 isMeta、非压缩摘要、origin 缺省或 human（排除任务通知、子 agent 回报）；字符串或 text 块。
@@ -320,11 +338,16 @@ function humanText(obj) {
   return text.replace(INJECTED, ' ').replace(COMMAND_TAG, ' ');
 }
 
-function toolSignals(state, name, input, pos, refOpts, anchors) {
+function toolSignals(state, { id, name, input }, pos, refOpts, anchors) {
   if (name === 'Agent' || name === 'Task') {
     const flat = [input.description, input.prompt].filter((x) => typeof x === 'string').join(' ').replace(/\s+/g, ' ').trim();
     const refs = extractRefs(flat, refOpts);
-    if (hasRefs(refs)) addSignal(state, { kind: 'dispatch', ...pos, refs, snippet: around(mask(flat), refs, SNIPPET_MAX) });
+    // toolUseId 对得上子 agent 的 meta.json：engine 据此把派活的任务交给那一路子 agent。
+    // 没写任务的派活也要留（带 toolUseId 才留）：engine 在派活时刻冻结主线焦点给那一路，不能等它干活时再取当时的焦点
+    const named = hasRefs(refs);
+    if (named || typeof id === 'string') {
+      addSignal(state, { kind: 'dispatch', ...pos, refs, ...(named && { snippet: around(mask(flat), refs, SNIPPET_MAX) }), ...(typeof id === 'string' && { toolUseId: id }) });
+    }
     return;
   }
   const target = name === 'Bash' ? input.command : ['Edit', 'MultiEdit', 'Write'].includes(name) ? input.file_path : null;
@@ -366,11 +389,15 @@ function docAnchors(docs) {
   });
 }
 
-// gitBranch 每个分支只记第一次出现；HEAD（分离状态）丢弃。
-function noteBranch(state, branch, pos) {
-  if (typeof branch !== 'string' || !branch || branch === 'HEAD' || state.branches.includes(branch)) return;
-  state.branches.push(branch);
-  addSignal(state, { kind: 'branch', ...pos, branch });
+// gitBranch 每一路（主线、各认得出的子 agent）每个分支只记第一次出现；HEAD（分离状态）丢弃。
+// 子 agent 的分支信号带 lane：它在别的 worktree / 分支上干活，不改主线的分支关联。
+function noteBranch(state, branch, pos, f) {
+  if (typeof branch !== 'string' || !branch || branch === 'HEAD') return;
+  const lane = f?.lane ?? null;
+  const seen = lane ? (f.branches ??= []) : state.branches;
+  if (seen.includes(branch)) return;
+  seen.push(branch);
+  addSignal(state, { kind: 'branch', ...pos, branch, ...(lane && { lane }) });
 }
 
 function noteLastMsg(state, at, masked) {
@@ -388,13 +415,14 @@ function addSignal(state, sig) {
   state.signals.splice(i, 0, { ...sig, until: sig.at });
 }
 
-// ponytail: 晚到的信号插进中间时，之前已记到前一条信号上的更晚记录不会挪过来（子 agent 文件里的信号才会这样，
+// 只续同一路（主线 lane = null，各子 agent 一路）的最近一条信号。
+// ponytail: 晚到的信号插进中间时，之前已记到前一条信号上的更晚记录不会挪过来（认不出派活的子 agent 文件里的信号才会这样，
 // 且前后两条通常同属一个焦点段）；要精确就得存每条记录的时间。
-function extendUntil(state, at) {
+function extendUntil(state, at, lane = null) {
   const t = Date.parse(at);
   for (let i = state.signals.length - 1; i >= 0; i--) {
     const s = state.signals[i];
-    if (Date.parse(s.at) > t) continue;
+    if (Date.parse(s.at) > t || (s.lane ?? null) !== lane) continue;
     if (Date.parse(s.until) < t) s.until = at;
     return;
   }
@@ -508,7 +536,7 @@ function toRecord(s) {
     id: s.id,
     files: Object.keys(s.files),
     cwds: s.cwds,
-    branches: s.branches,
+    branches: [...new Set([...s.branches, ...Object.values(s.files).flatMap((f) => f.branches ?? [])])],
     title: title ? clip(title, TITLE_MAX) : s.firstPrompt,
     firstAt: s.firstAt,
     lastAt: s.lastAt,

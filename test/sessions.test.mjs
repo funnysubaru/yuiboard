@@ -256,11 +256,12 @@ const toolResult = (cwd, timestamp, out) =>
 const prLink = (timestamp, repo, n) => JSON.stringify({ type: 'pr-link', sessionId: 's', prNumber: n, prUrl: `https://github.com/${repo}/pull/${n}`, prRepository: repo, timestamp });
 const T = (hhmm) => `2026-09-20T${hhmm}:00.000Z`;
 
-async function scanOne(lines, extraFiles = {}) {
+async function scanOne(lines, extraFiles = {}, rawFiles = {}) {
   const { repo, records, opts } = await makeSpace();
   const dir = path.join(records, enc(repo));
   await put(path.join(dir, 's1.jsonl'), jsonl(...lines(repo)));
   for (const [rel, ls] of Object.entries(extraFiles)) await put(path.join(dir, 's1', rel), jsonl(...ls(repo)));
+  for (const [rel, text] of Object.entries(rawFiles)) await put(path.join(dir, 's1', rel), text);
   const r = await scan(sigOpts(opts));
   return { ...r, s: r.sessions[0], file: `${enc(repo)}/s1.jsonl`, repo, records, opts, dir };
 }
@@ -335,13 +336,73 @@ test('⑤ 子 agent：派活 → dispatch；子 agent 文件里的派活原文�
   });
   const sub = file.replace('s1.jsonl', 's1/subagents/agent-x1.jsonl');
   assert.deepEqual(s.signals.map((x) => strip({ ...x, until: undefined })), [
-    { kind: 'dispatch', at: T('01:01'), file, line: 2, refs: { keys: [], nums: ['5.2'], codes: [], docIds: ['devboard-mvp'] }, snippet: '任务 5.2 信号提取 feature_name: devboard-mvp；（虚构）按规则实现', until: undefined },
+    { kind: 'dispatch', at: T('01:01'), file, line: 2, refs: { keys: [], nums: ['5.2'], codes: [], docIds: ['devboard-mvp'] }, snippet: '任务 5.2 信号提取 feature_name: devboard-mvp；（虚构）按规则实现', toolUseId: 'toolu_x', until: undefined },
     { kind: 'touch', at: T('01:10'), file: sub, line: 2, docPath: '.claude/specs/devboard-mvp/tasks.md', until: undefined },
     { kind: 'edit', at: T('01:10'), file: sub, line: 2, docPath: '.claude/specs/devboard-mvp/tasks.md', taskNums: ['5.2'], until: undefined },
     { kind: 'edit', at: T('01:20'), file: sub, line: 3, docPath: '.claude/specs/devboard-mvp/tasks.md', taskNums: ['5.4'], until: undefined },
   ]);
   assert.equal(s.signals[0].until, T('01:02'), '子 agent 文件的记录按时间并入 until');
   assert.equal(s.signals.at(-1).until, T('01:30'));
+});
+
+test('子 agent 各算各的：meta.json 对上派活的 toolUseId → agent 信号与 lane；它的记录只续自己这一路，不续主线', async () => {
+  const tasksAbs = (repo) => path.join(repo, '.claude/specs/devboard-mvp/tasks.md');
+  const agentTool = (id, description) => ({ type: 'tool_use', id, name: 'Agent', input: { description, prompt: '（虚构）', subagent_type: 'x' } });
+  const { s, repo, dir, opts, cache } = await scanOne((repo) => [
+    human(repo, T('01:00'), '做 devboard-mvp 的任务 3.2'),
+    ai(repo, T('01:01'), [agentTool('toolu_a', 'devboard-mvp 任务 5.2'), agentTool('toolu_b', 'devboard-mvp 任务 5.3')]),
+    ai(repo, T('01:05'), [text('（虚构）等它们')]),
+  ], {
+    'subagents/agent-a.jsonl': (repo) => [
+      human(repo, T('01:02'), '（派活原文）', { isSidechain: true }),
+      ai(repo, T('01:40'), [tool('Edit', { file_path: tasksAbs(repo), old_string: '- [ ] 5.2 会话信号', new_string: '- [x] 5.2 会话信号' })], { isSidechain: true }),
+      ai(repo, T('01:50'), [text('（虚构）做完了')], { isSidechain: true }),
+    ],
+    'subagents/agent-b.jsonl': (repo) => [ai(repo, T('01:03'), [text('（虚构）开始')], { isSidechain: true }), ai(repo, T('02:30'), [text('（虚构）还在做')], { isSidechain: true })],
+    'subagents/agent-c.jsonl': (repo) => [ai(repo, T('01:04'), [text('（虚构）没有 meta 的子 agent')], { isSidechain: true })],
+  }, {
+    'subagents/agent-a.meta.json': '{"agentType":"x","toolUseId":"toolu_a"}',
+    'subagents/agent-b.meta.json': '{"agentType":"x","toolUseId":"toolu_b"}',
+  });
+  assert.deepEqual(s.signals.map((x) => [x.kind, x.at, x.until, x.lane ?? null, x.toolUseId ?? null]), [
+    ['prompt', T('01:00'), T('01:00'), null, null],
+    ['dispatch', T('01:01'), T('01:01'), null, 'toolu_a'],
+    ['dispatch', T('01:01'), T('01:05'), null, 'toolu_b'], // 主线的记录续主线最近一条；没有 meta 的 agent-c（01:04）仍并入主线
+    ['agent', T('01:02'), T('01:02'), 'toolu_a', null],
+    ['agent', T('01:03'), T('02:30'), 'toolu_b', null],
+    ['touch', T('01:40'), T('01:40'), 'toolu_a', null],
+    ['edit', T('01:40'), T('01:50'), 'toolu_a', null],
+  ]);
+  // 增量追加：主线的新记录续主线，子 agent 的新记录续它自己
+  await appendFile(path.join(dir, 's1.jsonl'), jsonl(ai(repo, T('03:00'), [text('（虚构）主线')])));
+  await appendFile(path.join(dir, 's1', 'subagents', 'agent-a.jsonl'), jsonl(ai(repo, T('03:10'), [text('（虚构）补一句')], { isSidechain: true })));
+  const s2 = (await scan(sigOpts({ ...opts, prev: cache }))).sessions[0];
+  assert.deepEqual(s2.signals.filter((x) => x.kind !== 'touch').map((x) => [x.kind, x.lane ?? null, x.until]), [
+    ['prompt', null, T('01:00')], ['dispatch', null, T('01:01')], ['dispatch', null, T('03:00')],
+    ['agent', 'toolu_a', T('01:02')], ['agent', 'toolu_b', T('02:30')], ['edit', 'toolu_a', T('03:10')],
+  ]);
+});
+
+test('子 agent 各算各的：没写任务的派活也留下（带 toolUseId、不带片段）；子 agent 的分支信号带 lane，与主线各记各的首次', async () => {
+  const agentTool = (id, description) => ({ type: 'tool_use', id, name: 'Agent', input: { description, prompt: '（虚构）', subagent_type: 'x' } });
+  const { s } = await scanOne((repo) => [
+    human(repo, T('01:00'), '做 devboard-mvp 的任务 3.2', { gitBranch: 'feat' }),
+    ai(repo, T('01:01'), [agentTool('toolu_d', '找一下相关代码')], { gitBranch: 'feat' }),
+  ], {
+    'subagents/agent-d.jsonl': (repo) => [
+      ai(repo, T('01:02'), [text('（虚构）开始')], { isSidechain: true, gitBranch: 'feat' }),
+      ai(repo, T('01:30'), [text('（虚构）换到独立 worktree')], { isSidechain: true, gitBranch: 'child-wt' }),
+    ],
+  }, { 'subagents/agent-d.meta.json': '{"toolUseId":"toolu_d"}' });
+  assert.deepEqual(s.signals.map((x) => [x.kind, x.branch ?? null, x.lane ?? null, x.toolUseId ?? null, 'snippet' in x]), [
+    ['prompt', null, null, null, true],
+    ['branch', 'feat', null, null, false],
+    ['dispatch', null, null, 'toolu_d', false],
+    ['agent', null, 'toolu_d', null, false],
+    ['branch', 'feat', 'toolu_d', null, false], // 主线记过 feat，子 agent 这一路照样记自己的首次
+    ['branch', 'child-wt', 'toolu_d', null, false],
+  ]);
+  assert.deepEqual(s.branches, ['feat', 'child-wt']);
 });
 
 test('touch：Edit / Write 路径与 Bash 命令里的规划文档目录；整词匹配、每份文档只记第一次', async () => {

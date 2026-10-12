@@ -67,6 +67,37 @@ mkdir -p ~/.agents/skills && ln -s "$PWD/skills/devboard-add-project" ~/.agents/
 
 AI 只经 `devboard-ctl save` / `remove` 改 `devboard.config.json`（改前自动备份为 `devboard.config.json.bak`），对接入的仓库只读。
 
+## 在 Claude Code 里看（mod）
+
+本仓库同时是一个 Claude Code 插件，在终端和桌面 App 里都会在对话旁打开 YUIBoard 面板，显示当前会话所属的项目：总览数字、「本会话正在做」的任务卡片、任务树、需要确认、诊断。数据从正在运行的 YUIBoard 服务读，不做任何改动。已在 Claude Code 2.1.293–2.1.296 上验证。
+
+在 Claude Code 会话里安装（需要 Claude Code 2.1.275 或更新）：
+
+```
+/plugin install yuiboard --marketplace funnysubaru/yuiboard
+```
+
+插件和 YUIBoard 服务要是同一版本。更新服务（`git pull` 后重启）时，插件也一起更新：`claude plugin update yuiboard@yuiboard`。
+
+想试检出目录里的改动，可以直接从检出目录加载插件（仓库根目录就是插件）：只对一个终端会话用 `claude --plugin-dir /path/to/yuiboard`；要在所有会话（包括桌面 App）里加载，在 `~/.claude/settings.json` 的 `env` 里加 `"CLAUDE_CODE_PLUGIN_DIRS": "/path/to/yuiboard"`，然后新开会话。这样加载时，插件的 id 是 `yuiboard@inline`，不是 `yuiboard@yuiboard`。
+
+配置项：
+
+| 配置项 | 默认值 | 含义 |
+|---|---|---|
+| `url` | `http://127.0.0.1:4317` | YUIBoard 服务地址。服务要和插件是同一版本 |
+| `lang` | `auto` | 面板语言：`auto`（跟随 Claude Code）、`zh`、`ja`、`en` |
+
+```sh
+echo '{"url":"http://127.0.0.1:4317"}' | claude plugin configure yuiboard@yuiboard --values-stdin
+```
+
+- 会话一能对应到项目，面板就自动打开一次：会话关联到了该项目的任务，或工作目录在所看的工作区里。关掉后本会话不再自动打开，输入 `/yuiboard` 可重新打开。
+- 卡片显示本会话关联到的任务。像写 PR 标题那样点名任务，例如「`<文档>` 的任务 3.2」，只写数字不算。同时有多个任务在做时，最近有活动的排第一。子 agent 各算各的，派出去的任务在各自的子 agent 干活期间都算「运行中」。
+- 终端里用键盘操作：按 Ctrl+X 再按 Tab 进入面板，Tab 或方向键移动，Enter 按下，Esc 回到输入框。全屏模式且终端至少 110 列时，面板停靠在右侧，可以用鼠标点。任务编号和「在浏览器打开」会打开网页；终端不支持 OSC 8 链接时，网址会跟在文字后面显示。
+- 改配置项对正在运行的会话生效；改插件文件不生效，要新开会话。
+- 插件还带着 skill `skills/devboard-add-project`。安装的插件是从一份副本运行的，所以这份 skill 在写任何东西之前，会先问你 YUIBoard 检出目录在哪里。如果你也按上一节做了软链，Claude Code 会列出两份，用哪一份都行。给 Codex 用的 `~/.agents/skills` 软链不受影响。
+
 ## 常驻服务（macOS / Linux）
 
 用 `devboard-ctl` 安装或重启服务，不必手改 plist 或 unit 文件。

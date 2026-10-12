@@ -469,6 +469,26 @@ const ui = {
   // —— 日期选择（N24）——
   '上个月': 'Previous month',
   '下个月': 'Next month',
+  // —— Claude Code mod 面板（N25，hooks/model.mjs）——
+  '{0}…（省略 {1} 字）': '{0}… ({1} chars omitted)',
+  '已打开 YUIBoard 面板': 'Opened the YUIBoard panel',
+  '在浏览器打开': 'Open in browser',
+  '当前目录不在看板的项目里': 'The current directory isn’t in any project on the board',
+  '启动命令：{0}': 'Start command: {0}',
+  '看板摘要超过 4 MiB，mod 读不了，请在浏览器里看': 'The board summary is over 4 MiB, too large for the mod; view it in the browser',
+  '本会话正在做': 'This session is working on',
+  '本会话最近做的': 'Recently worked on in this session',
+  '另有 {0} 个关联任务': '{0} more linked task(s)',
+  '{0} 停滞': '{0} stalled',
+  '本会话还没关联到任务': 'This session isn’t linked to a task yet',
+  '另有 {0} 条，在浏览器里看': '{0} more; view them in the browser',
+  '（{0} 份有解析问题）': ' ({0} with parse issues)',
+  '{0} 处（{1}）': '{0} issue(s) ({1})',
+  '{0} 个 PR 没关联到任务': '{0} PR(s) not linked to any task',
+  '读不懂的文件 {0} 个': '{0} unreadable file(s)',
+  '另有 {0} 条错误，见诊断': '{0} more error(s); see Diagnostics',
+  '另有 {0} 个': '{0} more',
+  '其余 {0} 项在浏览器里看': '{0} more item(s); view them in the browser',
 };
 
 // 服务端消息（src/ 里 msg 标记的句子）：tx() 只拿这一段的模板匹配，免得界面里的短模板吃掉服务端句子。

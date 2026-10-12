@@ -19,6 +19,7 @@ import { claudeCode } from './sessions/claude-code.mjs';
 import { codex } from './sessions/codex.mjs';
 import { msg } from './msg.mjs';
 import { say } from './say.mjs';
+import { summarize } from './summary.mjs';
 
 // 固定白名单：URL → web/ 下的文件名与类型。不做任何路径拼接，`/../`、`/src/…` 之类的 URL 根本碰不到文件系统。
 const STATIC = {
@@ -70,7 +71,7 @@ export async function startServer({
     project,
     errors: config.errors.filter((e) => e.projectId === project.id),
     version: 0,
-    payload: null,      // { board, json, gzip, etag }：推算一次、序列化一次，请求直接复用
+    payload: null,      // { board, json, gzip, etag, summary: { json, gzip, etag } }：推算一次、序列化一次，请求直接复用
     refreshError: null,
     ready: Promise.resolve(),
     // ---- 任务 3.5 的调度状态 ----
@@ -117,9 +118,10 @@ export async function startServer({
     if (pathname === '/api/projects') return sendJson(res, 200, projectList());
     const ev = /^\/api\/projects\/([^/]+)\/events$/.exec(pathname);
     if (ev) return serveEvents(req, res, runtimes.get(safeDecode(ev[1])));
-    const m = /^\/api\/projects\/([^/]+)\/board$/.exec(pathname);
+    // /summary：给 Claude Code mod 的摘要（N25 design §3.1），错误码与 /board 同口径
+    const m = /^\/api\/projects\/([^/]+)\/(board|summary)$/.exec(pathname);
     const rt = m && runtimes.get(safeDecode(m[1]));
-    if (rt) return serveBoard(req, res, rt);
+    if (rt) return serveBoard(req, res, rt, m[2] === 'summary');
     if (m) return sendJson(res, 404, { error: 'not-found', messages: [msg('没有这个项目')] });
     const d = /^\/api\/projects\/([^/]+)\/docs\/([^/]+)$/.exec(pathname);
     if (d) {
@@ -193,12 +195,12 @@ export async function startServer({
     };
   }
 
-  async function serveBoard(req, res, rt) {
+  async function serveBoard(req, res, rt, summary = false) {
     // 配置有错的项目返回明确错误而不是空看板（需求 1.6）；409 表示「当前配置下不可用」。
     if (rt.errors.length) return sendJson(res, 409, { error: 'config', messages: rt.errors.map((e) => e.message) });
     await rt.ready; // 启动时的首次推算还没完成就等它，不先回空结果
-    const p = rt.payload;
-    if (!p) return sendJson(res, 500, { error: 'refresh', messages: [rt.refreshError ?? msg('看板尚未生成')] });
+    if (!rt.payload) return sendJson(res, 500, { error: 'refresh', messages: [rt.refreshError ?? msg('看板尚未生成')] });
+    const p = summary ? rt.payload.summary : rt.payload;
     const headers = { ETag: p.etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding' };
     if (req.headers['if-none-match'] === p.etag) return send(res, 304, null, null, headers);
     const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] ?? '');
@@ -410,9 +412,8 @@ export async function startServer({
   function publish(rt, board) {
     board.version = ++rt.version;
     board.freshness = { ...board.freshness, refreshing: { ...rt.refreshing } };
-    const json = JSON.stringify(board);
-    // ETag 取内容哈希而非版本号：版本号重启后从 1 重数，用它会让浏览器拿到过期的 304。
-    rt.payload = { board, json, gzip: gzipSync(json), etag: `"${createHash('sha1').update(json).digest('base64url')}"` };
+    // 摘要与完整看板同一次推算，各自序列化、各带 ETag（N25）
+    rt.payload = { board, ...packed(JSON.stringify(board)), summary: packed(JSON.stringify(summarize(board))) };
     for (const c of rt.clients) c.write(`data: ${JSON.stringify({ version: rt.version })}\n\n`);
     scheduleBoardWrite(rt);
   }
@@ -591,6 +592,11 @@ function manualChange(method, body) {
   if (typeof taskKey !== 'string' || !taskKey || taskKey.length > 300 || !Number.isSafeInteger(pr) || pr <= 0) return null;
   if (method === 'DELETE') return { taskKey, pr };
   return action === 'link' || action === 'unlink' ? { taskKey, pr, action } : null;
+}
+
+// 预先压缩；ETag 取内容哈希而非版本号：版本号重启后从 1 重数，用它会让浏览器拿到过期的 304。
+function packed(json) {
+  return { json, gzip: gzipSync(json), etag: `"${createHash('sha1').update(json).digest('base64url')}"` };
 }
 
 function send(res, status, type, body, headers = {}) {
