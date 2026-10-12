@@ -4,7 +4,7 @@
 
 A local, read-only progress board for AI-assisted development.
 
-YUIBoard reads the planning docs in your repository (spec `tasks.md` files, ADRs, plans, TODO lists), your GitHub pull requests, and your local Claude Code / Codex session logs. From these it works out where every task stands: not started, in progress, awaiting review, awaiting merge, or done. It shows the result in your browser as six views: an overview, a Gantt chart, a dependency graph, what to do next, what needs your attention, and diagnostics.
+YUIBoard reads the planning docs in your repository (spec `tasks.md` files, ADRs, plans, TODO lists), your GitHub pull requests, and your local Claude Code / Codex session logs. From these it works out where every task stands: not started, in progress, awaiting review, awaiting merge, or done. It shows the result in your browser as six views: an overview, a Gantt chart, a dependency graph, what to do next, what needs your attention, and diagnostics. It can also show a pane right inside Claude Code that follows the task you're working on (see [Watch it inside Claude Code](#watch-it-inside-claude-code-mod)).
 
 ![YUIBoard overview: task tree with status, linked PRs and a running Claude session](docs/images/overview.png)
 
@@ -70,6 +70,12 @@ The AI changes `devboard.config.json` only through `devboard-ctl save` / `remove
 ## Watch it inside Claude Code (mod)
 
 This repository is also a Claude Code plugin. It opens a YUIBoard pane next to the conversation, in both the terminal and the desktop app. The pane shows the project the session belongs to: the overall numbers, a card with the task this session is working on, the task tree, Needs attention and Diagnostics. It reads from your running YUIBoard service and changes nothing. Tested with Claude Code 2.1.293–2.1.296.
+
+Both screenshots show the fictional demo project. The session asked about "sync-engine task 2.3", so the card at the top shows that task and why it has its status, and the tree opens to it.
+
+![YUIBoard pane in the Claude Code desktop app, focused on the task the session is working on](docs/images/claude-app.png)
+
+![YUIBoard pane docked beside a Claude Code terminal session](docs/images/claude-cli.png)
 
 Install it in a Claude Code session:
 

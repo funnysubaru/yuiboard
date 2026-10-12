@@ -4,7 +4,7 @@
 
 本机运行、只读的 AI 开发进度看板。
 
-YUIBoard 读取仓库里的规划文档（spec 的 `tasks.md`、ADR、plan、TODO 清单）、GitHub PR 与本机 Claude Code / Codex 会话记录，推算每个任务处在「未开始 / 进行中 / 等待 review / 等待合并 / 已合并完成」哪一态，在浏览器里给出总览、甘特图、关系图、下一步、需要确认与诊断六个视图。
+YUIBoard 读取仓库里的规划文档（spec 的 `tasks.md`、ADR、plan、TODO 清单）、GitHub PR 与本机 Claude Code / Codex 会话记录，推算每个任务处在「未开始 / 进行中 / 等待 review / 等待合并 / 已合并完成」哪一态，在浏览器里给出总览、甘特图、关系图、下一步、需要确认与诊断六个视图。也可以直接在 Claude Code 里打开一个面板，跟着你正在做的任务走（见[在 Claude Code 里看](#在-claude-code-里看mod)）。
 
 ![YUIBoard 总览：带状态的任务树、关联的 PR 与运行中的 Claude 会话](docs/images/overview-zh.png)
 
@@ -70,6 +70,12 @@ AI 只经 `devboard-ctl save` / `remove` 改 `devboard.config.json`（改前自�
 ## 在 Claude Code 里看（mod）
 
 本仓库同时是一个 Claude Code 插件，在终端和桌面 App 里都会在对话旁打开 YUIBoard 面板，显示当前会话所属的项目：总览数字、「本会话正在做」的任务卡片、任务树、需要确认、诊断。数据从正在运行的 YUIBoard 服务读，不做任何改动。已在 Claude Code 2.1.293–2.1.296 上验证。
+
+两张截图用的都是虚构的演示项目。会话问的是「sync-engine 的任务 2.3」，所以顶部卡片显示这个任务和它处于该状态的原因，任务树也展开到这一行。
+
+![Claude Code 桌面 App 里的 YUIBoard 面板，聚焦在会话正在做的任务上](docs/images/claude-app.png)
+
+![停靠在 Claude Code 终端会话旁的 YUIBoard 面板](docs/images/claude-cli.png)
 
 在 Claude Code 会话里安装：
 

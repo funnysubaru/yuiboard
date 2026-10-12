@@ -4,7 +4,7 @@
 
 ローカルで動く、読み取り専用の AI 開発進捗ボード。
 
-YUIBoard はリポジトリ内の計画ドキュメント（spec の `tasks.md`、ADR、plan、TODO リスト）、GitHub の pull request、ローカルの Claude Code / Codex セッションログを読み、各タスクが「未着手 / 進行中 / レビュー待ち / マージ待ち / 完了」のどれにあるかを割り出します。結果はブラウザで、概要・ガント・関係図・次にやること・要確認・診断の 6 つのビューとして表示します。
+YUIBoard はリポジトリ内の計画ドキュメント（spec の `tasks.md`、ADR、plan、TODO リスト）、GitHub の pull request、ローカルの Claude Code / Codex セッションログを読み、各タスクが「未着手 / 進行中 / レビュー待ち / マージ待ち / 完了」のどれにあるかを割り出します。結果はブラウザで、概要・ガント・関係図・次にやること・要確認・診断の 6 つのビューとして表示します。Claude Code の中にペインを開いて、いま作業中のタスクを追いかけることもできます（[Claude Code の中で見る](#claude-code-の中で見るmod)を参照）。
 
 ![YUIBoard の概要：状態付きのタスクツリー、関連する PR、実行中の Claude セッション](docs/images/overview-ja.png)
 
@@ -70,6 +70,12 @@ AI が `devboard.config.json` を変更するのは `devboard-ctl save` / `remov
 ## Claude Code の中で見る（mod）
 
 このリポジトリは Claude Code のプラグインでもあります。ターミナルでもデスクトップアプリでも、会話の横に YUIBoard のペインを開き、そのセッションが属するプロジェクトを表示します。全体の数字、「このセッションで作業中」のタスクのカード、タスクツリー、要確認、診断です。データは動いている YUIBoard サービスから読み、何も変更しません。Claude Code 2.1.293–2.1.296 で確認済みです。
+
+どちらのスクリーンショットも架空のデモプロジェクトです。セッションで「sync-engine のタスク 2.3」について尋ねたので、上のカードにそのタスクとその状態の理由が出て、タスクツリーもその行まで開いています。
+
+![Claude Code デスクトップアプリの YUIBoard ペイン。セッションで作業中のタスクにフォーカスしている](docs/images/claude-app.png)
+
+![Claude Code のターミナルセッションの横に固定された YUIBoard ペイン](docs/images/claude-cli.png)
 
 Claude Code のセッションでインストールします。
 
