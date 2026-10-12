@@ -26,6 +26,7 @@ const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.mjs': ['app.mjs', 'text/javascript; charset=utf-8'],
   '/svg.mjs': ['svg.mjs', 'text/javascript; charset=utf-8'],
+  '/md.mjs': ['md.mjs', 'text/javascript; charset=utf-8'],
   '/i18n.mjs': ['i18n.mjs', 'text/javascript; charset=utf-8'],
   '/i18n-ja.mjs': ['i18n-ja.mjs', 'text/javascript; charset=utf-8'],
   '/i18n-en.mjs': ['i18n-en.mjs', 'text/javascript; charset=utf-8'],

@@ -6,6 +6,7 @@
 
 import { graphSvg, legendIcon, ganttSvg, GANTT_ZOOM } from './svg.mjs';
 import { t, tx, LANGS, LANG_KEY, getLang } from './i18n.mjs';
+import { mdParse, mdText, mdUnrendered, MD_FENCE } from './md.mjs';
 
 // 界面语言（N22 任务 22.3）：界面文案一律 t`…`（中文原文即翻译键），服务端发来的中文说明套 tx()；
 // 用户内容（任务标题、文档名、PR 标题、路径、会话片段）不翻。注意别把局部变量起名叫 t，会遮住翻译函数。
@@ -527,7 +528,7 @@ export function renderTree(board, state, redraw = () => {}) {
         h('div', { class: `grp lv2${gopen ? '' : ' closed'}` },
           h('button', { type: 'button', class: 'caret', 'aria-label': t`折叠分组 ${doc.docId}/${g.id}`,
             'aria-expanded': String(gopen), onclick: toggle(gkey) }, '▾'),
-          h('span', { class: 'gname' }, g.title),
+          h('span', { class: 'gname' }, mdInline(g.title)),
           h('span', { class: 'gp' }, allDone(gs) && h('span', { class: 'st done' }, t`${STATUS_UI.done.icon} 全部完成`),
             `${gs.counts.done}/${gs.total}`, stackBar(gs))),
         h('div', { class: `rows${gopen ? '' : ' hide'}` }, rows(list)));
@@ -537,7 +538,7 @@ export function renderTree(board, state, redraw = () => {}) {
       h('div', { class: `grp lv1${open ? '' : ' closed'}` },
         doc.tasks.length ? h('button', { type: 'button', class: 'caret', 'aria-label': t`折叠文档 ${doc.docId}`,
           'aria-expanded': String(open), onclick: toggle(key) }, '▾') : h('span', { class: 'caret' }),
-        doc.adr ? adrHead(doc) : h('span', { class: 'gname', title: doc.title }, doc.docId),
+        doc.adr ? adrHead(doc) : h('span', { class: 'gname', title: doc.title && mdText(doc.title) }, doc.docId),
         doc.shownArchived && h('span', { class: 'flag info' }, t('已归档')), // 任务 6.6：「显示已归档文档」筛出来的
         h('span', { class: 'muted path' }, doc.path),
         h('span', { class: 'gp' }, st.total ? [`${st.counts.done}/${st.total}`, stackBar(st)] : null)),
@@ -743,7 +744,7 @@ function drawerContent(board, state, task, redraw, onClose) {
   return [
     h('div', { class: 'hd' },
       h('div', { class: 'hmain' },
-        h('div', { class: 'muted crumb' }, group ? `${doc.docId} · ${group.title}` : doc.docId),
+        h('div', { class: 'muted crumb' }, group ? [`${doc.docId} · `, mdInline(group.title)] : doc.docId),
         h('h2', {}, t`${task.number}　`, mdInline(task.title)),
         h('div', { class: 'hdtags' }, badge(view.status),
           rowTags(view, board.conflicts.filter((c) => c.taskKey === task.key), prTagger(board, state)(view, task), sessionTagger(board, state)(view)))),
@@ -782,57 +783,81 @@ function taskBody(task, getText) {
   return mdBlock(text.lines.slice(task.bodyRange[0], task.bodyRange[1]));
 }
 
-// 行内 Markdown：`代码`、**加粗**、~~删除线~~、[文字](http 链接)；最左的先认，加粗 / 删除线里面递归。
-// 全部走 h() / 文本节点（design K2），原文里的 HTML 标签照字面显示；非 http(s) 链接只留文字。
-// ponytail: 不认 *斜体*——实物里单星号多是 `*.mjs` 这类通配，误伤比漏认更糟；真要时再按词边界加。
-const MD_INLINE = /`([^`]+)`|\*\*(.+?)\*\*|~~(.+?)~~|\[([^\]]+)\]\(([^)\s]+)\)/g;
-function mdInline(text) {
-  const out = [];
-  let last = 0;
-  for (const m of text.matchAll(MD_INLINE)) {
-    out.push(text.slice(last, m.index));
-    if (m[1] != null) out.push(h('code', {}, m[1]));
-    else if (m[2] != null) out.push(h('b', {}, mdInline(m[2])));
-    else if (m[3] != null) out.push(h('s', {}, mdInline(m[3])));
-    else out.push(/^https?:\/\//.test(m[5]) ? h('a', { href: m[5], target: '_blank', rel: 'noopener', onclick: (e) => e.stopPropagation() }, m[4]) : m[4]);
-    last = m.index + m[0].length;
-  }
-  out.push(text.slice(last));
-  return out.filter((x) => x !== '');
-}
+// 行内 Markdown（解析在 md.mjs）：全部走 h() / 文本节点（design K2），原文里的 HTML 标签照字面显示。
+const mdNode = (x) => typeof x === 'string' ? x
+  : x.tag === 'a' ? h('a', { href: x.href, target: '_blank', rel: 'noopener', onclick: (e) => e.stopPropagation() }, x.children)
+    : h(x.tag, {}, x.children.map(mdNode));
+const mdInline = (text) => mdParse(text).map(mdNode);
+// 认不了的写法照原文显示并标明（N12 方向 B），不悄悄走样
+const mdRaw = (text) => [text, h('span', { class: 'flag info mdraw' }, t('此处未按 Markdown 渲染'))];
 
-// SVG / 悬停只收纯文本；复用同一解析结果，保留代码里的星号和不配对的标记，不改任务原文。
-const mdText = (text) => mdInline(text ?? '').map((part) => typeof part === 'string' ? part : part.textContent).join('');
+// GFM 表格：| 分隔的单元格，\| 是字面竖线
+const mdCells = (row) => row.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim().replaceAll('\\|', '|'));
+const MD_SEP = /^:?-+:?$/;
+const MD_ALIGN = (c) => (c.endsWith(':') ? (c.startsWith(':') ? 'center' : 'right') : c.startsWith(':') ? 'left' : null);
 
 /**
- * 块级 Markdown（任务正文够用的子集）：按缩进嵌套的 - / * / + / 1. 列表（含 [ ] [x] [~] 复选框）、``` 代码块、> 引用，
- * 其余行成段落。列表项下更深缩进的非列表行接在该项里（换行保留，中文文档的手动折行多是有意的）。
+ * 块级 Markdown（任务正文）：按缩进嵌套的 - / * / + / 1. 列表（含 [ ] [x] [~] 复选框）、``` / ~~~ 代码块、
+ * 连续 > 行合成一个引用（里面再按块排）、GFM 表格，其余行成段落。列表项下更深缩进的非列表行接在该项里
+ * （换行保留，中文文档的手动折行多是有意的）。md.mjs 认不了的写法（正文标题、分隔线、图片、脚注、HTML 标签）照原文并标明。
  */
 const MD_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 const MD_BOX = { ' ': '☐', x: '☑', X: '☑', '~': '◔' };
-export function mdBlock(lines) {
-  const root = h('div', { class: 'md' });
+export function mdBlock(lines, root = h('div', { class: 'md' })) {
   let lists = []; // 打开着的列表：{ indent, tag, el, li }
   let para = null;
-  let code = null;
+  let code = null; // { fence, indent, el }
   const into = () => lists.at(-1)?.li ?? root;
-  for (const line of lines) {
+  // 代码块 / 引用 / 表格：比它缩进浅的列表项里，否则在顶层
+  const block = (indent, el) => {
+    while (lists.length && lists.at(-1).indent >= indent) lists.pop();
+    into().append(el);
+    para = null;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (code) {
-      if (/^\s*```/.test(line)) code = null;
-      else code.append(document.createTextNode(`${line.replace(/^\s+/, '')}\n`));
+      const f = MD_FENCE.exec(line);
+      if (f && f[1][0] === code.fence[0] && f[1].length >= code.fence.length) code = null;
+      else code.el.append(document.createTextNode(`${line.slice(Math.min(code.indent, line.length - line.trimStart().length))}\n`));
       continue;
     }
     if (!line.trim()) { para = null; continue; }
     const indent = line.length - line.trimStart().length;
     const text = line.trim();
-    if (text.startsWith('```')) {
-      while (lists.length && lists.at(-1).indent >= indent) lists.pop();
-      code = h('code', {});
-      into().append(h('pre', {}, code));
-      para = null;
+    const fence = MD_FENCE.exec(line);
+    if (fence) {
+      code = { fence: fence[1], indent, el: h('code', {}) };
+      block(indent, h('pre', {}, code.el));
       continue;
     }
-    const item = MD_ITEM.exec(line);
+    if (text.startsWith('>')) {
+      let j = i;
+      while (j + 1 < lines.length && lines[j + 1].trim().startsWith('>')) j++;
+      block(indent, mdBlock(lines.slice(i, j + 1).map((l) => l.replace(/^\s*>\s?/, '')), h('blockquote', {})));
+      i = j;
+      continue;
+    }
+    const head = text.includes('|') && i + 1 < lines.length ? mdCells(text) : null;
+    const sep = head && mdCells(lines[i + 1]);
+    if (sep && sep.length === head.length && sep.every((c) => MD_SEP.test(c))) {
+      const align = sep.map(MD_ALIGN);
+      const row = (tag, cells) => h('tr', {}, cells.map((c, k) => h(tag, { style: align[k] && { 'text-align': align[k] } },
+        mdUnrendered(c) ? mdRaw(c) : mdInline(c))));
+      let j = i + 2;
+      const body = [];
+      // 表格行到空行、缩进退出、或新块（列表项 / 引用 / 围栏）为止，那一行交回外层（GFM：其他块开始时表格结束）
+      const more = (l) => l.includes('|') && l.trim() && l.length - l.trimStart().length >= indent
+        && !l.trim().startsWith('>') && !MD_FENCE.test(l) && !MD_ITEM.test(l);
+      while (j < lines.length && more(lines[j])) body.push(row('td', mdCells(lines[j++])));
+      block(indent, h('div', { class: 'mdtable' }, h('table', {}, h('thead', {}, row('th', head)), body.length ? h('tbody', {}, body) : null)));
+      i = j - 1;
+      continue;
+    }
+    const issue = mdUnrendered(text);
+    const inl = (s) => (issue ? mdRaw(s) : mdInline(s));
+    const solo = issue === 'heading' || issue === 'hr'; // 正文里的标题 / 分隔线自成一段，不当列表项
+    const item = !solo && MD_ITEM.exec(line);
     if (item) {
       const tag = /\d/.test(item[2]) ? 'ol' : 'ul';
       // 同缩进换了标记类型（- 换成 1.）= 另起一个列表
@@ -843,17 +868,17 @@ export function mdBlock(lines) {
         lists.push({ indent, tag, el, li: null });
       }
       const box = /^\[([ xX~])\]\s+(.*)$/.exec(item[3]);
-      const li = h('li', {}, box && h('span', { class: 'box' }, MD_BOX[box[1]]), mdInline(box ? box[2] : item[3]));
+      const li = h('li', {}, box && h('span', { class: 'box' }, MD_BOX[box[1]]), inl(box ? box[2] : item[3]));
       lists.at(-1).el.append(li);
       lists.at(-1).li = li;
       para = null;
       continue;
     }
-    if (lists.length && indent > lists.at(-1).indent) { lists.at(-1).li.append(h('br', {}), ...mdInline(text)); continue; }
+    if (lists.length && indent > lists.at(-1).indent) { lists.at(-1).li.append(h('br', {}), ...inl(text)); continue; }
     lists = [];
-    if (text.startsWith('>')) { root.append(h('blockquote', {}, mdInline(text.replace(/^>\s?/, '')))); para = null; continue; }
-    if (para) para.append(h('br', {}), ...mdInline(text));
-    else root.append(para = h('p', {}, mdInline(text)));
+    if (para && !solo) para.append(h('br', {}), ...inl(text));
+    else root.append(para = h('p', {}, inl(text)));
+    if (solo) para = null;
   }
   return root;
 }
@@ -910,7 +935,7 @@ function adrHead(doc) {
   const { number, status } = doc.adr;
   return [
     h('span', { class: 'flag info' }, 'ADR'),
-    h('span', { class: 'gname', title: doc.docId }, number ? `ADR-${number}` : doc.docId, doc.title ? ` ${doc.title}` : null),
+    h('span', { class: 'gname', title: doc.docId }, number ? `ADR-${number}` : doc.docId, doc.title ? [' ', mdInline(doc.title)] : null),
     status && h('span', { class: 'adrst', title: t('文档声明的状态（原文）') }, status),
   ];
 }
@@ -932,7 +957,7 @@ function docProgress(board) {
     const st = stats.get(doc.docId);
     return h('div', { class: 'dp' },
       h('div', { class: 'dh' },
-        h('span', { title: doc.title }, doc.docId),
+        h('span', { title: doc.title && mdText(doc.title) }, doc.docId),
         h('span', { class: 'muted' }, st.total ? `${st.counts.done}/${st.total} · ${pct(st.ratio)}` : (DOC_STATE[doc.parse.state]?.label ?? t('无任务')))),
       st.total ? stackBar(st) : null);
   });
@@ -969,7 +994,7 @@ function graphCard(board, state, redraw) {
   return h('div', { class: 'card' },
     h('div', { class: 'legend' },
       // 选项只写 docId（同总览任务树）：真实文档标题常是「Implementation Plan — <docId>」这类长句，撑宽下拉挤掉图例；标题放悬停提示
-      dropdown(state, { label: t('文档'), value: doc?.docId, options: docs.map((d) => ({ value: d.docId, text: d.docId, title: d.title })),
+      dropdown(state, { label: t('文档'), value: doc?.docId, options: docs.map((d) => ({ value: d.docId, text: d.docId, title: d.title && mdText(d.title) })),
         onChange: (v) => { state.graphDoc = v; redraw(); } }),
       h('span', {}, legendIcon('dep'), t(' 依赖（先后顺序）')),
       h('span', {}, legendIcon('par'), t(' 可并行')),
@@ -1769,7 +1794,7 @@ function checkBox(board, state, c) {
 // ---------------- 诊断（任务 6.5） ----------------
 
 // design §8 最低约定的条目号 → 名称（engine 的 diagnostics.convention[].rule 用条目号）
-export const RULE_TEXT = { 1: t('任务行写法'), 3: t('依赖 / 并行写法'), 5: t('预计耗时写法'), 7: t('PR 标题写法') };
+export const RULE_TEXT = { 1: t('任务行写法'), 3: t('依赖 / 并行写法'), 5: t('预计耗时写法'), 7: t('PR 标题写法'), 8: t('Markdown 写法') };
 export const SESSION_SOURCE_TEXT = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
 /**
@@ -1963,7 +1988,7 @@ function ganttCard(board, state, redraw) {
     const dk = `doc:${doc.docId}`;
     const dopen = fold[dk] ?? (taskFiltered(state) || dsum.done < dsum.total);
     add(h('div', { class: 'gl g1', onclick: toggle(dk, dopen) }, caret(dopen),
-      h('span', { class: 'tt', title: doc.title ?? doc.docId }, doc.docId), ganttProg(dsum)), { kind: 'doc' });
+      h('span', { class: 'tt', title: mdText(doc.title ?? doc.docId) }, doc.docId), ganttProg(dsum)), { kind: 'doc' });
     if (!dopen) continue;
     section(`${doc.docId}/`, doc.tasks.filter((t) => !t.groupId));
     for (const g of doc.groups) {
@@ -1972,7 +1997,7 @@ function ganttCard(board, state, redraw) {
       const sum = ganttSum(list, views);
       const gk = `grp:${doc.docId}/${g.id}`;
       const gopen = fold[gk] ?? (taskFiltered(state) || sum.done < sum.total);
-      add(h('div', { class: 'gl g2', onclick: toggle(gk, gopen) }, caret(gopen), h('span', { class: 'tt', title: g.title }, g.title), ganttProg(sum)),
+      add(h('div', { class: 'gl g2', onclick: toggle(gk, gopen) }, caret(gopen), h('span', { class: 'tt', title: mdText(g.title) }, mdInline(g.title)), ganttProg(sum)),
         { kind: 'grp', span: spanOf(list, views), tipSpan: t`分组范围（事实与预估的并集）` });
       if (gopen) section(`${doc.docId}/${g.id}`, list);
     }
@@ -2191,7 +2216,7 @@ function filterMenu(board, state) {
   const srcs = new Map();
   for (const d of base.docs) if (!srcs.has(d.sourceType)) srcs.set(d.sourceType, d.sourceLabel ?? d.sourceType);
   const ms = new Map();
-  for (const d of scoped) for (const g of d.groups) if (d.tasks.some((t) => t.groupId === g.id) && !ms.has(g.code ?? g.title)) ms.set(g.code ?? g.title, g.title);
+  for (const d of scoped) for (const g of d.groups) if (d.tasks.some((t) => t.groupId === g.id) && !ms.has(g.code ?? g.title)) ms.set(g.code ?? g.title, mdText(g.title));
   const sel = (label, field, items) => h('label', { 'data-f': field }, label,
     dropdown(state, { label: t`筛选：${label}`, value: state[field] ?? '', onChange: (v) => go({ [field]: v || null }),
       options: [{ value: '', text: t('全部') }, ...items.map(([v, text, tip]) => ({ value: v, text, title: tip }))] }));
@@ -2201,9 +2226,9 @@ function filterMenu(board, state) {
   return h('details', { class: 'fdrop', open: state.filterOpen, ontoggle: (e) => { state.filterOpen = e.currentTarget.open; } },
     h('summary', { class: n ? 'on' : null }, n ? t`筛选（${n}）` : t('筛选')),
     h('div', { class: 'fpanel' },
-      sel(t('规划文档'), 'doc', base.docs.map((d) => [d.docId, d.docId, d.title])),
+      sel(t('规划文档'), 'doc', base.docs.map((d) => [d.docId, d.docId, d.title && mdText(d.title)])),
       sel(t('来源类型'), 'src', [...srcs].map(([v, text]) => [v, text, v])),
-      sel(t('里程碑'), 'ms', [...ms].map(([v, title]) => [v, v, title])),
+      sel(t('里程碑'), 'ms', [...ms].map(([v, title]) => [v, mdText(v), title])),
       sel(t('状态'), 'status', Object.entries(STATUS_UI).map(([v, s]) => [v, `${s.icon} ${s.text}`])),
       chk(t('只看有冲突的任务'), 'conflict'),
       chk(t('显示已归档文档'), 'archived'),

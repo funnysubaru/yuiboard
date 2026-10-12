@@ -32,7 +32,8 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
     - `cache/devboard.pid` and `cache/devboard.log`;
     - the LaunchAgent plist or systemd user unit that it created itself.
 - **Frontend.** Build nodes only with `h()`, `textContent` and `setAttribute`; never `innerHTML`. Session excerpts and error messages go through `src/mask.mjs` first.
-  - Markdown in task text is rendered with `h()` too (`mdBlock` / `mdInline` in `web/app.mjs`). SVG, tooltips and picker buttons use the plain text from `mdText`. HTML in docs shows up as literal text.
+  - Markdown in task text is rendered with `h()` too (`mdBlock` / `mdInline` in `web/app.mjs`; parsing lives in the DOM-free `web/md.mjs`). SVG, tooltips and picker buttons use the plain text from `mdText`. HTML in docs shows up as literal text.
+  - Forms the renderer can't handle are shown as written with a "not rendered as Markdown here" marker, and the same check (`mdUnrendered`) feeds rule 8 of the Diagnostics page's convention issues. A single `*` (as in `*.mjs`) and a single `~` (as in `1.2~1.8`) are never italic or strikethrough.
   - Dropdowns and dates always use the custom `dropdown()` (APG select-only combobox) and `datePicker()` (calendar dialog) in `web/app.mjs`, never a native `<select>` or `<input type=date>`.
     - Open state and the highlighted item or focused day live in `state.dd` / `state.dp`, keyed by aria-label, so they survive a full SSE redraw and focus comes back by aria-label.
     - They close when the view changes, and the `pointerdown` handler in `main()` closes them on an outside click.
@@ -59,6 +60,8 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
 - **Task rows come from `tasks.md`**; PRs are only tags at the end of the row.
   - PRs are linked to tasks mainly by their title. Bare numbers are never recognized.
   - "Task N (partial)" keeps the evidence and the tag. Like any other link, it can't replace the checkbox, and partial PRs also go through the open / not-synced checks.
+  - A milestone code with a partial marker makes the whole group partial. If the same task is referenced both fully and partially, it counts as partial.
+- **Off-convention writing is never silently misread.** Common variants are recognized directly (the partial-marker forms, ADR short names like `ADR-0033`, `阶段一`, `depends on 1.1 + 1.2`, `1~3`). Anything whose intent is visible but still can't be read goes to the Diagnostics page's convention issues with a suggested rewrite, and the onboarding skill lists it in its report.
 - **Linking sessions to tasks is deliberately strict across documents.** A bare task number counts only for docs that already appear in the session's context, and a bare number in a hand-off message doesn't link anything. Don't loosen this; doing so marks same-numbered tasks in other specs as in progress.
 - **Branch lines are assigned by a PR's base branch** (plus `titlePrefix` / `labels`). Users switch lines from the top bar. Don't add a config that hard-limits counting to one line; this was tried and reverted.
 - **Claude Code subagents count separately.** When a subagent's log has an `agent-*.meta.json` with the `toolUseId` of the call that dispatched it, it runs as its own lane: the tasks dispatched to it keep their activity from its own records and don't change the main thread's focus. A dispatch that names no task freezes the main thread's focus at that moment for the lane. Branch signals are per lane too. Subagents without meta merge into the main thread as before.

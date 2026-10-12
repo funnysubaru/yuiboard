@@ -412,7 +412,8 @@ function detectConflicts(tasks, views) {
 // ---- 任务 3.4：PR 关联、PR 侧冲突、即将可开工在等什么、在等我处理 ----
 
 const SOURCE_TEXT = { title: msg('标题'), body: msg('描述'), branch: msg('分支名') };
-const hasRefs = (r) => r.keys.length + r.nums.length + r.codes.length > 0;
+// unknown（像引用却对不上，N9）也算「有引用」：标题写了 ADR-0099#3 就以标题为准、报出来，不退到描述去误读。
+const hasRefs = (r) => r.keys.length + r.nums.length + r.codes.length + r.unknown.length > 0;
 // 列表太长只列前 5 个，detail 是给人看的一句话
 const brief = (keys) => (keys.length > 5 ? msg`${joinList(keys.slice(0, 5))} 等 ${keys.length} 个` : joinList(keys));
 
@@ -453,12 +454,23 @@ export function linkPrs(docs, prs, config, manual = []) {
       branch: unalias(extractBranchRefs(pr.headRefName, opts), alias) };
     const source = ['title', 'body', 'branch'].find((s) => hasRefs(raw[s]));
     const res = source ? resolveRefs(raw[source], cands) : { tasks: [], ambiguous: [], missing: [] };
+    // N9：ADR 简称在候选里对应多篇（个人版与 next: 线都在、或编号重复）→ 改记歧义，不猜
+    for (const m of [...res.missing]) {
+      const i = m.lastIndexOf('#');
+      const ids = i > 0 && alias.get(m.slice(0, i));
+      if (!Array.isArray(ids)) continue;
+      res.missing.splice(res.missing.indexOf(m), 1);
+      res.ambiguous.push({ raw: m, candidates: ids.map((id) => `${id}${m.slice(i)}`) });
+    }
     const evidence = source ? raw[source].spans.filter((x) => x.kind !== 'docId').map((x) => x.text).join('、') : '';
-    // 「任务 13（部分）」：PR 只做了一部分，合并后不算完成（deriveStatus）；同段另有完整引用（编号 / 键 / 代号）覆盖到的照常算完整
+    // 「任务 13（部分）」「doc#13（部分）」「M0-c（部分）」：PR 只做了一部分，合并后不算完成（deriveStatus）。
+    // 带标记的引用解析出的任务都算部分，同段另有完整引用覆盖到的也算部分（保守，owner 2026-10-12）
     const r = source && raw[source];
-    const whole = r?.partial.length ? resolveRefs({ ...r, nums: r.nums.filter((n) => !r.partial.includes(n)) }, cands).tasks : null;
+    const inPart = (x) => r.partial.includes(x);
+    const part = r?.partial.length
+      ? resolveRefs({ ...r, keys: r.keys.filter(inPart), nums: r.nums.filter(inPart), codes: r.codes.filter(inPart) }, cands).tasks : [];
     for (const taskKey of res.tasks) {
-      links.push({ pr: pr.number, taskKey, source, evidence, ...(whole && !whole.includes(taskKey) ? { partial: true } : {}) });
+      links.push({ pr: pr.number, taskKey, source, evidence, ...(part.includes(taskKey) ? { partial: true } : {}) });
     }
 
     const refIssues = [];
@@ -466,9 +478,16 @@ export function linkPrs(docs, prs, config, manual = []) {
     for (const a of res.ambiguous) refIssues.push(msg`${where}里的「${a.raw}」有歧义，可能是 ${brief(a.candidates)}`);
     for (const m of res.missing) {
       // 3.2 交接：只命中重复编号任务时 resolveRefs 也记 missing，这里改口，别让人以为任务不存在
-      refIssues.push(onlyDuplicates(m, cands)
+      refIssues.push(onlyDuplicates(m, cands, r.docIds)
         ? msg`${where}里的「${m}」对应的编号在文档里重复出现，无法确定是哪一条`
         : msg`${where}引用了不存在的任务：${m}`);
+    }
+    for (const u of r?.unknown ?? []) {
+      // 大小写写错的任务键给出正确写法；其余给通用建议
+      const i = u.lastIndexOf('#');
+      const id = i > 0 && opts.knownDocIds.find((x) => x.toLowerCase() === u.slice(0, i).toLowerCase());
+      refIssues.push(id ? msg`${where}里的「${u}」像任务引用，但对不上这条分支线的文档或里程碑代号；建议写成「${id + u.slice(i)}」`
+        : msg`${where}里的「${u}」像任务引用，但对不上这条分支线的文档或里程碑代号；建议写成「<spec 名>#<编号>」或文档里已有的里程碑代号`);
     }
     // 已关闭未合并的 PR 不进「需要确认」的 h / i / n：它不参与关联与状态（excludedPrs、deriveStatus 都跳过），
     // 写法问题也没法再改（如 #20 改分支名后被 GitHub 关闭，旧分支名永远留在 PR 上）。PR 详情仍列 refIssues。
@@ -532,10 +551,11 @@ function applyManual(docs, manual, links, info, conflicts) {
 }
 
 // 引用（编号或完整任务键）在候选里只对得上重复编号的任务。范围与代号不在此列。
-function onlyDuplicates(ref, cands) {
+// 裸编号跟着引用里写的文档收窄（与 resolveRefs 同口径）：「ADR-0030 … 任务 6.1」只看 ADR-0030，别处的重复编号不算。
+function onlyDuplicates(ref, cands, docIds = []) {
   const i = ref.lastIndexOf('#');
   const num = ref.slice(i + 1);
-  const docs = i < 0 ? cands : cands.filter((d) => d.docId === ref.slice(0, i));
+  const docs = i >= 0 ? cands.filter((d) => d.docId === ref.slice(0, i)) : docIds.length ? cands.filter((d) => docIds.includes(d.docId)) : cands;
   return docs.some((d) => (d.tasks ?? []).some((t) => t.duplicate && t.number === num));
 }
 
@@ -696,7 +716,7 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
         if (bareOnly && g.kind === 'dispatch' && cands.length > 1) res.tasks = [];
         for (const a of res.ambiguous) issue(g, msg`${name}里的「${a.raw}」有歧义，可能是 ${brief(a.candidates)}`);
         for (const m of res.missing) {
-          issue(g, onlyDuplicates(m, cands) ? msg`${name}里的「${m}」对应的编号在文档里重复出现，无法确定是哪一条`
+          issue(g, onlyDuplicates(m, cands, g.refs.docIds) ? msg`${name}里的「${m}」对应的编号在文档里重复出现，无法确定是哪一条`
             : msg`${name}引用了不存在的任务：${m}`);
         }
         const note = msg`${SIGNAL_TEXT[g.kind]}：「${g.snippet}」`;
@@ -732,14 +752,22 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
 
 // N17：docRef 分支线的文档 docId 带前缀（next:ADR-0033-…），PR 里写的是不带前缀的原名（alias）。
 // 候选里别的文档已占用这个原名时不认（未归类 PR 用全部文档，原名归主工作区那份）。
+// N9：ADR 简称 `ADR-0033`（文件名开头的编号）也是别名：候选里恰好一篇时指向它；多篇时值为 docId 数组，
+// 写成任务键（ADR-0033#64）报歧义，单独出现只用于收窄到这几篇。分支线 docFilter 先过滤，所以个人版 / next: 线各认各的。
 function aliasMap(cands) {
   const ids = new Set(cands.map((d) => d.docId));
-  return new Map(cands.filter((d) => d.alias && !ids.has(d.alias)).map((d) => [d.alias, d.docId]));
+  const alias = new Map(cands.filter((d) => d.alias && !ids.has(d.alias)).map((d) => [d.alias, d.docId]));
+  for (const [short, list] of Map.groupBy(cands.filter((d) => d.adr?.number), (d) => `ADR-${d.adr.number}`)) {
+    if (!ids.has(short) && !alias.has(short)) alias.set(short, list.length === 1 ? list[0].docId : list.map((d) => d.docId));
+  }
+  return alias;
 }
 function unalias(raw, alias) {
   if (!alias.size) return raw;
   const back = (id) => alias.get(id) ?? id;
-  return { ...raw, docIds: raw.docIds.map(back), keys: raw.keys.map((k) => { const i = k.lastIndexOf('#'); return `${back(k.slice(0, i))}${k.slice(i)}`; }) };
+  // 有歧义的简称写成的任务键保持原样，resolveRefs 记 missing 后由 linkPrs 改记歧义
+  const key = (k) => { const i = k.lastIndexOf('#'); const d = i < 0 ? null : back(k.slice(0, i)); return d === null || Array.isArray(d) ? k : `${d}${k.slice(i)}`; };
+  return { ...raw, docIds: raw.docIds.flatMap(back), keys: raw.keys.map(key), partial: raw.partial.map(key) };
 }
 
 // 会话在哪条分支线的工作区里干活，就只在那条分支线的文档里认引用（与 PR 的候选口径一致）。
@@ -811,11 +839,19 @@ function staleWaiting(views, config) {
 
 /**
  * 不满足最低约定之处（需求 3.5、18.2；design §8）：逐条写明「哪条约定、哪份文档哪一行 / 哪个 PR」，方便 owner 让 AI 改。
- * rule = design §8 的条目号：1 任务行、3 依赖 / 并行写法、5 预计耗时、7 PR 标题（含分支线前缀 / 标签）。
+ * rule = design §8 的条目号：1 任务行、3 依赖 / 并行写法、5 预计耗时、7 PR 标题（含分支线前缀 / 标签）、8 正文 Markdown。
  * 只收文档与 PR 标题的写法问题；会话里的歧义引用不是约定问题，只进「需要确认」。
  * 文档内按行号排，PR 按 PR 列表顺序接在文档之后。
- * @returns {{rule: 1|3|5|7, docId?: string, line?: number, pr?: number, detail: string}[]}
+ * @returns {{rule: 1|3|5|7|8, docId?: string, line?: number, pr?: number, detail: string}[]}
  */
+// 第 8 条（N12）：正文里页面认不了的 Markdown 写法（web/md.mjs 的 mdUnrendered），页面照原文显示并标明，这里给改写建议。
+const MD_ADVICE = {
+  heading: msg('正文里的标题不按 Markdown 渲染，照原文显示；建议改成加粗行'),
+  hr: msg('正文里的分隔线不按 Markdown 渲染，照原文显示；建议删掉或改成空行'),
+  image: msg('图片不按 Markdown 渲染，照原文显示；建议改成链接 [说明](地址)'),
+  footnote: msg('脚注不按 Markdown 渲染，照原文显示；建议把说明写进正文或括号'),
+  html: msg('HTML 标签不按 Markdown 渲染，照原文显示；建议改成 Markdown 写法，或放进行内代码'),
+};
 function conventionIssues(docs, conflicts) {
   const out = [];
   const byDoc = new Map(docs.map((d) => [d.docId, []]));
@@ -826,6 +862,8 @@ function conventionIssues(docs, conflicts) {
     for (const t of d.tasks) if (t.duplicate) at(d.docId, 1, t.line, msg`编号 ${t.number} 在文档里出现了不止一次`);
     for (const r of p.unknownRelations ?? []) at(d.docId, 3, r.line, msg`未识别的依赖说法：${r.text}`);
     for (const r of p.unknownEstimates ?? []) at(d.docId, 5, r.line, msg`无法识别的耗时写法：${r.text}`);
+    for (const r of p.unrenderedMarkdown ?? []) at(d.docId, 8, r.line, MD_ADVICE[r.kind]);
+    for (const x of p.diagnostics ?? []) at(d.docId, 1, x.source.line, x.message); // N9：复选框写法、混用的标题式任务等
   }
   // 悬空依赖（冲突 f）：写了依赖但对象找不到，多半是编号写错或跨文档没写 docId
   for (const c of conflicts) {

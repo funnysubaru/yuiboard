@@ -192,12 +192,42 @@ test('分支名：collab-m0d → M0-d；collab-15.2-docs → 15.2；task-3；版
   }
 });
 
-test('「（部分）」/「(部分)」标记：修饰整条列表；同段另有完整同号引用就不算部分；随口的「一部分」不认', () => {
+test('「（部分）」/「(部分)」标记：修饰整条列表；同段另有完整同号引用仍算部分（N9 保守）；随口的「一部分」不认', () => {
   assert.deepEqual(extractRefs('任务 13（部分）、任务 14').partial, ['13']);
   assert.deepEqual(extractRefs('Task 13、14 (部分)').partial, ['13', '14']);
-  assert.deepEqual(extractRefs('任务 13（部分）；另见任务 13').partial, []);
+  assert.deepEqual(extractRefs('任务 13（部分）；另见任务 13').partial, ['13']);
   assert.deepEqual(extractRefs('修复任务 13 的一部分').partial, []);
   assert.deepEqual(extractRefs('任务 13（部分）').spans.map((x) => x.text), ['任务 13（部分）'], '依据原文带上标记');
+});
+
+test('N9 部分标记的各种写法：不带括号 / 逗号后、任务键、里程碑代号、部分完成、part；「部分页面」不算', () => {
+  const o = optsOf(COLLAB_LINE);
+  const p = (t) => extractRefs(t, o).partial;
+  assert.deepEqual(p('fix: 任务 52 部分'), ['52']);
+  assert.deepEqual(p('fix: 任务 99，部分'), ['99']);
+  assert.deepEqual(p('fix: 任务 7（部分完成）'), ['7']);
+  assert.deepEqual(p('fix: Task 7 (part)'), ['7']);
+  assert.deepEqual(p(`fix: ${COLLAB}#4.1（部分）`), [`${COLLAB}#4.1`]);
+  assert.deepEqual(p('[V2] feat: M0-c（部分）'), ['M0-c']);
+  assert.deepEqual(p('[V2] feat: m0-c (partial)'), ['M0-c'], '代号忽略大小写，标记取规范写法');
+  assert.deepEqual(p('fix: 任务 1，部分页面改版'), [], '「部分」后面还接着文字是普通叙述');
+  assert.deepEqual(p('fix: 任务 1 (party)'), []);
+  // 代号带标记 = 整组任务都算部分（由调用方按 partial 再解析）
+  const raw = extractRefs('[V2] feat: M0-c（部分）', o);
+  assert.deepEqual(nums(resolveRefs({ ...raw, codes: raw.partial }, COLLAB_LINE).tasks), groupNums(collab, 'M0-c'));
+});
+
+test('N9 像引用却对不上：大小写错的任务键、对不上的 ADR 编号、同形态的未知代号进 unknown；别的仓库的 #N、PR#12、owner/repo#3、版本号、裸数字不进', () => {
+  const o = optsOf(COLLAB_LINE);
+  const u = (t) => extractRefs(t, o).unknown;
+  assert.deepEqual(u('fix: ADR-0099#3 修复'), ['ADR-0099#3']);
+  assert.deepEqual(u('docs: 记录 other-vendor#127 与 unknown-doc#3'), [], '别的仓库的 issue / PR 引用不算');
+  assert.deepEqual(u('fix: Collab-M0-Space-Run#3'), ['Collab-M0-Space-Run#3'], '大小写不对的任务键');
+  assert.deepEqual(u('[V2] feat: M0-z 收尾'), ['M0-z']);
+  assert.deepEqual(u('[V2] feat: H5 适配 v2'), [], '字母前缀与已知代号不同不算');
+  assert.deepEqual(extractRefs('fix: M2 芯片', { knownCodes: ['M0-a'] }).unknown, [], '已知代号都带「-后缀」时，M2 形态不同不算');
+  assert.deepEqual(u('合并 PR#12、issue#3 与 owner/repo-x#3 (collab 2.0.4) 1.15.526–529 修 3 个问题'), []);
+  assert.deepEqual(u(`fix: ${COLLAB}#3 与 M0-c`), [], '认得出的不进 unknown');
 });
 
 test('英文 / 日文 PR 标题：Tasks 3 and 4 / Task 1, 2, and 5 / タスク 3 と 4 / (partial) / （一部）；subtasks 3 不算', () => {

@@ -207,8 +207,30 @@ const b = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
 const by = (s) => b.docs.filter((d) => d.parse.state === s).map((d) => d.docId);
 console.log(JSON.stringify({ docs: b.docs.length, tasks: b.tasks.length, planning: by("planning").length,
   problems: b.docs.filter((d) => !["ok", "planning"].includes(d.parse.state)).map((d) => `${d.docId}: ${d.parse.reason ?? d.parse.state}`),
-  github: b.freshness.github.state === "off" ? "GitHub not connected" : "GitHub connected" }));'
+  markdown: b.diagnostics.convention.filter((x) => x.rule === 8).map((x) => `${x.docId}:${x.line} ${x.detail}`),
+  github: b.freshness.github.state === "off" ? "GitHub not connected" : "GitHub connected",
+  convention: b.diagnostics.convention.length, prTitlesChecked: !b.degraded.noPrData,
+  conventionSamples: b.diagnostics.convention.slice(0, 8).map((x) => `${x.pr != null ? `PR #${x.pr}` : `${x.docId}:${x.line}`} ${x.detail}`) }));'
 ```
+
+`markdown` lists Markdown in task bodies that the board cannot render (headings inside a body, horizontal rules, images, footnotes, HTML tags; rule 8 of `<DEVBOARD>/CONVENTION.md`). The board shows these as written with a "not rendered as Markdown here" marker and lists them on the Diagnostics page; it is the same check, so do not grep for them yourself.
+
+### Convention check
+
+The board itself checks the existing documents and PR titles against `<DEVBOARD>/CONVENTION.md`; `convention` / `conventionSamples` above are its "Convention issues" list (each item says where and, for the forms below, how to rewrite it). `prTitlesChecked: false` means GitHub data has not arrived yet: say PR titles will be checked once it does, and the user can ask you to look again later.
+
+Explain the items to the user and suggest rewrites; **never edit the repository's documents or PR titles yourself** (the repository is read-only for this skill). Common forms and the rewrite to suggest:
+
+| Found | Suggest |
+|---|---|
+| `### 任务 1：…` / `### Task 1: …` heading in a document that also has `- [ ] N …` task lines (not counted as a task) | `- [ ] 1 …` |
+| `- [ ] task 2 …` (lowercase), `- [ ] ２ …` (full-width digits), `- [ ] 1、…` | `- [ ] 2 …` |
+| Checkbox other than `[ ]` / `[x]` / `[~]` (e.g. `[-]`) | `[ ]`, `[x]` or `[~]` |
+| PR title key whose document name is misspelled or has the wrong case (`Plan-A#1`), or a milestone code that does not exist (`M0-z`) | the exact document name / code, as given in the item |
+| PR title `ADR-0033#64` when several ADR-0033 documents are candidates (reported as ambiguous) | the full document name, e.g. `ADR-0033-engine-upgrade#64` |
+| PR title with no task reference while the description lists task numbers (the description is then taken as delivered) | put the delivered tasks in the title |
+
+Already recognized, no rewrite needed: partial markers `（部分）` `(partial)` `(part)` `（一部）` `（部分完成）` or a trailing `部分` after `任务 N` / a task key / a milestone code; `ADR-0033#64` when only one ADR-0033 is a candidate; `## 阶段一` / `## 第二阶段`; `依赖 1.1 + 1.2`, `依赖 1~3`.
 
 ## 8. Report
 
@@ -217,6 +239,8 @@ Onboarded into devboard: <name>
 - Board: http://devboard.localhost:<port>/#/overview?project=<id>
 - <docs> documents, <tasks> tasks; <planning> in planning (not yet broken into tasks)
 - Needs attention: <each of problems; "none" if empty>
+- Writing that does not match the convention: <convention, "none" if 0; otherwise the conventionSamples with suggested rewrites, and "full list: Diagnostics page → Convention issues"; if prTitlesChecked is false, add "PR titles not checked yet">
+- Markdown not rendered: <when markdown is non-empty: the count, then the first 10 entries; suggest the rewrite each entry names and point to rule 8 of CONVENTION.md. Do not edit the files yourself (the repository is read-only); the user decides. Omit this line when empty>
 - GitHub: <connected owner/name | not connected, working from documents and AI sessions only>
 - Port: <port> (<when portChanged is true: "the original port was taken by <occupant.command>, now using <port>">)
 - Service: <managedBy launchd:… or systemd:… → "resident service, starts at login (<label>)"; background:… → "background process; after a reboot, ask me to start it again">

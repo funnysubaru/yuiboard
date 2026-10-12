@@ -745,3 +745,33 @@ test('N17 docRef 缺文件：fetch 前后原因会更新（文件戳带上 ref �
   assert.match(docMap(second)['next:ADR-0099-none'].parse.reason, /origin\/next\/x 上没有这个文件/);
 });
 
+// ---- N9：写法不合约定时不静默误读 ----
+test('N9 中文数字的阶段标题：「阶段一」「第二阶段」「第 12 阶段」与「阶段 N」同一别名，可被依赖引用', () => {
+  const doc = parseTasksDoc('## 阶段一：起步\n- [ ] 1 甲\n## 第二阶段\n- [ ] 2 乙（依赖 阶段 1）\n## 第 12 阶段\n- [ ] 3 丙\n## 阶段二十三\n- [ ] 4 丁\n', 'n9');
+  assert.deepEqual(doc.groups.map((g) => g.alias), ['阶段 1', '阶段 2', '阶段 12', '阶段 23']);
+  assert.deepEqual(doc.relations.map((r) => r.objects[0].keys), [['n9#1']]);
+  // 超出九十九的不当别名，也不截成别的阶段（PR #43 review：「阶段一百」曾被截成「阶段 1」，依赖 阶段 1 指到任务 100）
+  const big = parseTasksDoc('## 阶段一百\n- [ ] 100 甲\n## 阶段一\n- [ ] 1 乙\n## 第两千阶段\n- [ ] 3 丙（依赖 阶段 1）\n', 'n9c');
+  assert.deepEqual(big.groups.map((g) => g.alias), [null, '阶段 1', null]);
+  assert.deepEqual(big.relations.map((r) => r.objects[0].keys), [['n9c#1']]);
+});
+
+test('N9 已有任务行时混用的标题式任务、小写 task / 全角数字的疑似任务行都报出来', () => {
+  const doc = parseTasksDoc('## 分组\n- [ ] 1 甲\n### 任务 2：标题式\n- [ ] task 3 小写\n- [ ] ４ 全角\n- [ ] 验收清单\n', 'n9');
+  assert.deepEqual(doc.tasks.map((t) => t.number), ['1']);
+  assert.deepEqual(doc.parse.diagnostics.map((d) => [d.source.line, d.message]),
+    [[3, '标题「任务 2：标题式」像标题式任务，但本文档已有任务行，它不会被当成任务；建议改成「- [ ] 2 标题式」']]);
+  assert.deepEqual([doc.parse.state, doc.parse.unrecognizedLines, doc.parse.uncheckedBoxes], ['partial', [4, 5], 1]);
+  // 没有任务行时标题式任务照旧兜底，不报
+  assert.deepEqual(parseTasksDoc('## Task 1: 甲\n- [x] 步骤\n', 'n9b').parse.diagnostics, []);
+});
+
+test('N9 未知来源类型不再静默跳过：记诊断并列出可用类型', async () => {
+  const repo = await put(await tmpDir(), { '.claude/specs/beta/tasks.md': TASKS });
+  const r = await loadProjectDocs(specProject(repo, { docSources: [{ type: 'spec-dir', label: 'spec', path: '.claude/specs' },
+    { type: 'md_dir', label: '计划', path: 'docs/plans' }] }));
+  assert.deepEqual(r.docs.map((d) => d.docId), ['beta']);
+  assert.deepEqual(r.diagnostics.map((d) => d.message.replaceAll('⁣', '')),
+    ['来源「计划」的类型「md_dir」不认识，已跳过；可用的类型：spec-dir、task-list、md-dir、adr-dir']);
+});
+

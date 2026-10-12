@@ -306,6 +306,11 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:var(--pa
 .md .box{margin-right:4px;color:var(--muted)}
 .md a{color:var(--accent)}
 .md s{color:var(--muted)}
+.md .mdtable{overflow-x:auto;margin:4px 0 8px}
+.md table{border-collapse:collapse;overflow-wrap:normal}
+.md th,.md td{border:1px solid var(--line);padding:3px 8px;text-align:left;vertical-align:top}
+.md th{background:var(--panel2)}
+.md .mdraw{margin-left:6px;white-space:nowrap}
 .srchd{display:flex;gap:10px;align-items:center}
 .srcview{max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:6px;font:11px/1.5 ui-monospace,Menlo,monospace}
 .srcview .ln{display:grid;grid-template-columns:44px 1fr;min-height:1.5em}
