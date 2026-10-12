@@ -482,3 +482,9 @@ test('lang 配置：指定 en 时不看设置', { options: { lang: 'en' } }, asy
   await start($, w)
   expect((await seen($)).lang).toBe('en')
 })
+
+test('url 配置为空串（plugin configure 存成 ""）时按未设置处理，仍连默认地址', { options: { url: '' } }, async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  expect(w.calls[0]?.url).toBe('/api/projects')
+})
