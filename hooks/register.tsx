@@ -239,7 +239,8 @@ export const register: Register = (on, options) => {
     gen++
     const lang = await pickLang($, options.lang)
     setLang(lang)
-    S = fresh(String(options.url ?? 'http://127.0.0.1:4317').replace(/\/+$/, ''), lang)
+    // 空串或只有空白按未设置处理：plugin configure 存进去的 "" 用 ?? 挡不住，会连到空地址
+    S = fresh((String(options.url ?? '').trim() || 'http://127.0.0.1:4317').replace(/\/+$/, ''), lang)
     await $.command.register({ name: 'yuiboard', description: 'Open the YUIBoard pane' })
     const s = S
     // 首轮放到后台：服务挂起时 fetch 最长等 30 秒，不能拖住会话开始。自动打开在 round 里认出项目时做
