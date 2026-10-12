@@ -62,7 +62,7 @@ Claude Code writes the plugin types to `.claude-plugin/types/` (git-ignored) whe
 
 When a change reaches the plugin (`hooks/`, `skills/`, or the `web/` modules the hooks import: `web/app.mjs`, `web/md.mjs`, `web/i18n*.mjs`), bump `version` in `.claude-plugin/plugin.json` (and `package.json` with it). `claude plugin update` compares only the version, so without a bump installed copies keep the old code.
 
-**CI**: GitHub Actions runs `test-linux` and `test-macos` (Node version from `package.json`, full `npm test`, 10-minute limit) on every PR, drafts included, and on pushes to `main`.
+**CI**: GitHub Actions runs `test-linux` and `test-macos` (Node version from `package.json`, full `npm test`, 10-minute limit) on every PR once it is ready for review (draft PRs are skipped; marking a PR ready starts the run), and on pushes to `main`.
 
 ## Hard constraints
 

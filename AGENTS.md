@@ -21,7 +21,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
   - GitHub is faked by `test/fixtures/fake-gh.mjs`, so tests never touch the network.
   - Register cleanup as soon as you start a server or child process, and release any promise you blocked on purpose. A timeout is not cleanup.
   - Fixtures use fictional data only.
-- **CI**: `.github/workflows/ci.yml` runs `test-linux` / `test-macos` on every PR, drafts included, and on pushes to `main`. The Node version comes from `package.json`.
+- **CI**: `.github/workflows/ci.yml` runs `test-linux` / `test-macos` on every PR once it is ready for review (drafts are skipped; marking a PR ready starts the run), and on pushes to `main`. The Node version comes from `package.json`.
 - **Read-only.** YUIBoard never writes to watched repositories, `~/.claude`, `~/.codex` or GitHub.
   - git runs only the allow-listed read-only commands in `GIT_ALLOWED` (`src/docs.mjs`), with `GIT_OPTIONAL_LOCKS=0` and without inherited `GIT_*` variables (`gitEnv()` in `src/config.mjs`; otherwise `GIT_DIR` and friends override `-C`).
   - GitHub is read only through `gh api graphql`, and YUIBoard holds no token.
@@ -98,7 +98,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
 ## Workflow
 
 - Use one branch and one PR per change, and describe what changed and how you verified it. Exception: changes that touch only docs (no code, tests or config) go straight to `main` without a PR.
-- **Open every PR as a draft** (`gh pr create --draft`), then stop and hand it to the maintainer for review. Run `gh pr ready` only after the maintainer says it's ready; never open a draft and mark it ready in the same turn, and never merge right after marking it ready. CI runs on drafts too.
+- **Open every PR as a draft** (`gh pr create --draft`), then stop and hand it to the maintainer for review. Run `gh pr ready` only after the maintainer says it's ready; never open a draft and mark it ready in the same turn, and never merge right after marking it ready. CI doesn't run on drafts, so fixes made during review don't re-run it; it starts at `gh pr ready`. Run `npm test` (plus `claude plugin test .` when the plugin changes) yourself before asking for review, and put the results in the PR description.
 - **Auto-merge is enabled for this repository.** After the maintainer approves, run `gh pr merge --auto --merge --delete-branch`: GitHub merges once `test-linux` and `test-macos` pass (immediately if they already have). Don't turn on auto-merge when opening a PR.
 - When behavior or counting rules change, update README / CONVENTION (all three languages) and this file in the same PR.
 - Ask the maintainer about product decisions instead of deciding them yourself.
