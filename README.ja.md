@@ -58,14 +58,19 @@ node src/server.mjs --config /path/to/devboard.config.json
 
 設定を手で編集する代わりに、AI エージェントに「このプロジェクトを devboard に追加して」と頼めます。同梱の skill `skills/devboard-add-project` が spec の `tasks.md`、ADR、plan、TODO ドキュメントを見つけ、一覧をあなたに確認したうえで `ops/devboard-ctl.mjs` 経由で設定を書き込み、サービスを再起動します。「このプロジェクトを devboard から外して」と言えば削除されます。
 
+初めて追加したあと、ボードが意図どおりに読めない書き方を見つけた場合（診断ページの「規約違反」）、AI はそのまま二つ目の skill `skills/devboard-fix-convention` で 1 件ずつ直します。ドキュメントの行や PR タイトルを変えるたびに変更内容を見せ、あなたが確認してから適用します。どの項目も飛ばせますし、いつでも止められます。あとから「規約に合わない箇所を直して」と頼むこともできます。
+
 skill をインストールするには、YUIBoard のディレクトリで次を実行します。skill はこのリンクをたどってこのディレクトリに戻るので、シンボリックリンクである必要があります。
 
 ```sh
-mkdir -p ~/.claude/skills && ln -s "$PWD/skills/devboard-add-project" ~/.claude/skills/devboard-add-project
-mkdir -p ~/.agents/skills && ln -s "$PWD/skills/devboard-add-project" ~/.agents/skills/devboard-add-project
+mkdir -p ~/.claude/skills ~/.agents/skills
+for s in devboard-add-project devboard-fix-convention; do
+  ln -s "$PWD/skills/$s" ~/.claude/skills/$s
+  ln -s "$PWD/skills/$s" ~/.agents/skills/$s
+done
 ```
 
-AI が `devboard.config.json` を変更するのは `devboard-ctl save` / `remove` 経由だけで、その前に `devboard.config.json.bak` へバックアップします。追加したリポジトリは読むだけです。
+AI が `devboard.config.json` を変更するのは `devboard-ctl save` / `remove` 経由だけで、その前に `devboard.config.json.bak` へバックアップします。追加したリポジトリは読むだけです（1 件ずつ確認した規約の修正を除きます）。
 
 ## Claude Code の中で見る（mod）
 
@@ -100,6 +105,7 @@ claude plugin install yuiboard --marketplace funnysubaru/yuiboard
 |---|---|---|
 | `url` | `http://127.0.0.1:4317` | YUIBoard サービスのアドレス。プラグインと同じバージョンのサービスが必要です |
 | `lang` | `auto` | ペインの言語：`auto`（Claude Code に合わせる）、`zh`、`ja`、`en` |
+| `guard` | `on` | 規約ガード（下記）：`on` または `off` |
 
 ```sh
 echo '{"url":"http://127.0.0.1:4317"}' | claude plugin configure yuiboard@yuiboard --values-stdin
@@ -108,8 +114,9 @@ echo '{"url":"http://127.0.0.1:4317"}' | claude plugin configure yuiboard@yuiboa
 - セッションがプロジェクトに対応づけられると、ペインがセッションごとに一度だけ自動で開きます。対応づけの条件は、セッションがそのプロジェクトのタスクに関連づいていること、または作業ディレクトリが監視中のワークスペースの中にあることです。閉じたあとは自動では開きません。`/yuiboard` で開き直せます。
 - カードにはセッションが関連づいたタスクが出ます。PR タイトルと同じように「`<ドキュメント>` のタスク 3.2」と名指ししてください。数字だけでは関連づきません。作業中のタスクが複数あるときは、最後に動きのあったものが先頭です。サブエージェントは別々に数えるので、割り振ったタスクはそれぞれのサブエージェントが動いている間「実行中」になります。
 - ターミナルではキーボードで操作します。Ctrl+X のあと Tab でペインに入り、Tab か矢印キーで移動、Enter で押す、Esc で入力欄に戻ります。全画面モードで 110 桁以上あるときは、ペインが右側に固定され、マウスでも押せます。タスク番号と「ブラウザで開く」は Web ページを開きます。OSC 8 リンクに対応していないターミナルでは、ラベルのあとにアドレスが表示されます。
+- **規約ガード**：セッションがプロジェクトに対応づけられると、プラグインは[文書の規約](CONVENTION.ja.md)の要点を Claude のシステムプロンプトの末尾に加え、タスク、依存、PR タイトルが最初から YUIBoard の読める形で書かれるようにします。Claude がそのプロジェクトのタスク文書を書くとき（Write、Edit）や、文字どおりの `--title` 付きで `gh pr create` / `gh pr edit` を実行するときは、ボードと同じパーサーで結果を確認します。今回の書き込みで新たに入る規約違反は止め、行、問題、推奨の書き方を Claude に伝えて、直してから書き直させます。文書に元からある問題は止めません。プラグインが読めないタイトル（変数、`--fill`）は通し、サービスにつながらないときもすべて通します。プラグイン自身は引き続き何も書き込みません。`guard` を `off` にすると要点の追加と停止の両方が無効になります。Codex にはこのフックがないので、代わりに [CONVENTION.ja.md](CONVENTION.ja.md) 末尾のブロックをリポジトリの `AGENTS.md` に貼り付けてください。
 - 設定項目の変更は動いているセッションにも反映されます。プラグインのファイルを変えても反映されないので、新しいセッションを開いてください。
-- プラグインには skill `skills/devboard-add-project` も入っています。インストールしたプラグインはコピーから動くので、この skill は何かを書き込む前に YUIBoard のチェックアウトの場所を尋ねます。前の節のとおりシンボリックリンクもしてあると Claude Code には二つ見えますが、どちらを使っても構いません。Codex 用の `~/.agents/skills` のリンクには影響しません。
+- プラグインには skill `skills/devboard-add-project` と `skills/devboard-fix-convention` も入っています。インストールしたプラグインはコピーから動くので、この skill は何かを書き込む前に YUIBoard のチェックアウトの場所を尋ねます。前の節のとおりシンボリックリンクもしてあると Claude Code にはそれぞれ二つ見えますが、どちらを使っても構いません。Codex 用の `~/.agents/skills` のリンクには影響しません。
 
 ## サービスとして動かす（macOS / Linux）
 
@@ -214,6 +221,7 @@ node ops/devboard-ctl.mjs revert <revision>                # その revision を
 - **リポジトリ**：許可リストにある読み取り専用の git コマンド（`rev-parse`、`merge-base --is-ancestor`、`for-each-ref`、`log`、`worktree list`）だけを `GIT_OPTIONAL_LOCKS=0` 付きで実行し、継承した `GIT_DIR` などの `GIT_*` 環境変数は無視します。fetch や checkout はせず、`.git` やインデックスに書き込まず、あなたや AI と git のロックを奪い合わず、リポジトリ内のファイルを一切変更しません。
 - **GitHub**：`gh` を通じて読むだけです。トークンは `gh` が管理し、設定、キャッシュ、ログ、ページには現れません。トークンに読み取り以上の権限があればページで知らせます。
 - **AI セッションログ**：ファイルは読み取り専用で開き、最後の完全な行までしか読まず、セッションディレクトリには何も作りません。キャッシュとページにはメタデータと短い抜粋だけを残し、キーやトークンらしきものはマスクします。会話全体を保存したりアップロードしたりはしません。
+- **規約の修正**は唯一の例外で、YUIBoard が変更するのではありません。`devboard-fix-convention` を実行したとき（またはプロジェクトを初めて追加したとき）、あなたのセッションの AI がドキュメントの行と PR タイトルを変更し、1 か所ごとにあなたの確認を取ります。
 - **サーバー自身**が書き込むのは、自分のディレクトリの `cache/` と `data/` だけです。ページは同一オリジンのリクエストだけを受け付け、書き込みエンドポイント（手動リンク、今すぐ更新）は `Origin` と `Content-Type` を検査します。テレメトリはありません。
 - `test/readonly.test.mjs` は一時リポジトリと一時セッションディレクトリに対して完全な更新を実行し、その後も `git status`、`.git`、セッションファイル（mtime を含む）が変わっていないことを確認します。
 

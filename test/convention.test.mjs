@@ -152,3 +152,30 @@ test('第 8 条 Markdown 子集：「照原文、不提示」的例子不被解�
     for (const c of marked) assert.ok(mdUnrendered(c), `${file}：${c}`);
   }
 });
+
+test('N27：文末「给 AI 的简短说明」代码块与插件注入的要点（hooks/model.mjs conventionSnippet）逐语言一致，示例真能识别', async () => {
+  const { setLang } = await import('../web/i18n.mjs');
+  const { conventionSnippet } = await import('../hooks/model.mjs');
+  try {
+    for (const [lang, l] of [['zh', LANGS.zh], ['en', LANGS.en], ['ja', LANGS.ja]]) {
+      setLang(lang);
+      const md = blocks(readFileSync(new URL(`../${l.file}`, import.meta.url), 'utf8')).filter((b) => b.lang === 'md');
+      assert.equal(md.length, 1, l.file);
+      assert.equal(md[0].text, conventionSnippet(), l.file);
+      // 要点里举的 PR 标题写法都认得出，「部分」写法记为部分交付
+      const titles = [...md[0].text.matchAll(/`((?:任务|Tasks?|タスク) [^`]+)`/g)].map((m) => m[1]);
+      assert.ok(titles.length >= 3, l.file);
+      for (const t of titles) assert.ok(extractRefs(t).nums.length, `${l.file} ${t}`);
+      assert.ok(titles.some((t) => extractRefs(t).partial.length), l.file);
+      // 依赖写法放进任务行能整句识别
+      const deps = [...md[0].text.matchAll(/`([（(][^`]+[)）])`/g)].map((m) => m[1]);
+      assert.equal(deps.length, 4, l.file);
+      for (const d of deps) {
+        const doc = parseTasksDoc(`### 里程碑 M1：a\n- [ ] 1 a\n- [ ] 2.1 b\n- [ ] 2.4 c\n- [ ] 9 x${d}\n`, 'ex');
+        assert.deepEqual([doc.relations.length, doc.parse.unknownRelations], [1, []], `${l.file} ${d}`);
+      }
+    }
+  } finally {
+    setLang('zh');
+  }
+});

@@ -7,8 +7,9 @@
 // 不留 version、computedAt 与 freshness 的读取时间 / 刷新中标记：它们每轮都变，留着会让摘要 ETag 在任务内容没变时也变，
 // mod 每 5 秒白拉一次 1 MB。诊断只用 freshness.github。
 const TOP = ['projectId', 'degraded', 'workspaces', 'diagnostics', 'defaults', 'stats'];
-const DOC = ['docId', 'title', 'path', 'kind', 'archived', 'workspaceId', 'sourceType', 'sourceLabel', 'parse', 'groups'];
-const DOC_TASK = ['key', 'number', 'title', 'checkbox', 'void', 'docId', 'groupId', 'parentKey'];
+// alias、adr 与任务的 duplicate：N27 的 PR 标题拦截按 refs.mjs 的同一口径解析引用（ADR 简称、重复编号）
+const DOC = ['docId', 'title', 'path', 'kind', 'archived', 'workspaceId', 'sourceType', 'sourceLabel', 'parse', 'groups', 'alias', 'adr'];
+const DOC_TASK = ['key', 'number', 'title', 'checkbox', 'void', 'docId', 'groupId', 'parentKey', 'duplicate'];
 const VIEW = ['key', 'status', 'rule', 'docOnly', 'syncPending', 'syncUnchecked', 'inProgressBy', 'activity', 'childSummary', 'next'];
 const PR_LINK = ['pr', 'partial', 'removedManually'];
 const SESSION_LINK = ['sessionId', 'activity', 'firstAt', 'lastAt'];

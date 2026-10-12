@@ -58,14 +58,19 @@ node src/server.mjs --config /path/to/devboard.config.json
 
 Rather than editing the config by hand, you can ask your AI agent: *"add this project to devboard"*. The bundled skill `skills/devboard-add-project` finds the spec `tasks.md` files, ADRs, plans and TODO docs, confirms the list with you, writes the config through `ops/devboard-ctl.mjs`, and restarts the service. Saying *"remove this project from devboard"* removes it.
 
+After a first onboarding, if the board finds writing it cannot read as intended (its Diagnostics page lists these as "Convention issues"), the AI goes straight on to fix them with the second skill, `skills/devboard-fix-convention`: one item at a time, showing you each change to a document line or PR title and applying it only after you confirm. You can skip any item or stop. You can also run it later: *"fix the convention issues"*.
+
 To install the skill, run this in the YUIBoard directory. It must be a symlink, because the skill uses it to find its way back to this directory.
 
 ```sh
-mkdir -p ~/.claude/skills && ln -s "$PWD/skills/devboard-add-project" ~/.claude/skills/devboard-add-project
-mkdir -p ~/.agents/skills && ln -s "$PWD/skills/devboard-add-project" ~/.agents/skills/devboard-add-project
+mkdir -p ~/.claude/skills ~/.agents/skills
+for s in devboard-add-project devboard-fix-convention; do
+  ln -s "$PWD/skills/$s" ~/.claude/skills/$s
+  ln -s "$PWD/skills/$s" ~/.agents/skills/$s
+done
 ```
 
-The AI changes `devboard.config.json` only through `devboard-ctl save` / `remove`, which back up the file to `devboard.config.json.bak` first. Repositories you add are only ever read.
+The AI changes `devboard.config.json` only through `devboard-ctl save` / `remove`, which back up the file to `devboard.config.json.bak` first. Repositories you add are only read, except for the convention fixes you confirm one by one.
 
 ## Watch it inside Claude Code (mod)
 
@@ -100,6 +105,7 @@ Options:
 |---|---|---|
 | `url` | `http://127.0.0.1:4317` | Address of the YUIBoard service. It must run the same version as the plugin. |
 | `lang` | `auto` | Pane language: `auto` (follows Claude Code), `zh`, `ja`, `en` |
+| `guard` | `on` | Convention guard (below): `on` or `off` |
 
 ```sh
 echo '{"url":"http://127.0.0.1:4317"}' | claude plugin configure yuiboard@yuiboard --values-stdin
@@ -108,8 +114,9 @@ echo '{"url":"http://127.0.0.1:4317"}' | claude plugin configure yuiboard@yuiboa
 - The pane opens by itself once per session, as soon as the session can be matched to a project: the session is linked to one of its tasks, or its working directory is inside a watched workspace. After you close it, it stays closed. Type `/yuiboard` to open it again.
 - The card shows the tasks the session is linked to. Name the task the way you would in a PR title, such as "`<doc>` task 3.2"; a bare number isn't enough. When several tasks are active, the one with the latest activity comes first. Subagents count separately, so each dispatched task stays "running" while its own subagent works.
 - In the terminal, use the keyboard: press Ctrl+X then Tab to enter the pane, Tab or the arrow keys to move, Enter to press, and Esc to go back to the prompt. In fullscreen mode with at least 110 columns, the pane docks on the right and takes mouse clicks. Task numbers and "Open in browser" open the web page. Terminals without OSC 8 links print the address after the label.
+- **Convention guard**: once the session is matched to a project, the plugin adds a short summary of [the document convention](CONVENTION.md) to Claude's system prompt, so tasks, dependencies and PR titles come out in a form YUIBoard reads. When Claude writes one of the project's task documents (Write or Edit) or runs `gh pr create` / `gh pr edit` with a literal `--title`, the plugin checks the result with the board's own parsers. Anything off-convention that this write adds is blocked with the line, the problem and the suggested form, and Claude fixes it before writing again. Problems the document already had are not blocked. A title the plugin cannot read (a variable, `--fill`) passes, and so does everything when the service is unreachable. The plugin itself still writes nothing. Set `guard` to `off` to turn both the summary and the blocking off. Codex has no such hook; paste the block at the end of [CONVENTION.md](CONVENTION.md) into the repository's `AGENTS.md` instead.
 - Option changes reach running sessions. Changes to the plugin's files don't; start a new session.
-- The plugin also brings the skill `skills/devboard-add-project`. An installed plugin runs from a copy, so this copy of the skill asks where your YUIBoard checkout is before it writes anything. If you also symlinked the skill as described above, Claude Code lists it twice; either one works. The `~/.agents/skills` link for Codex is not affected.
+- The plugin also brings the skills `skills/devboard-add-project` and `skills/devboard-fix-convention`. An installed plugin runs from a copy, so this copy of the skill asks where your YUIBoard checkout is before it writes anything. If you also symlinked the skills as described above, Claude Code lists them twice; either one works. The `~/.agents/skills` link for Codex is not affected.
 
 ## Run as a service (macOS / Linux)
 
@@ -214,6 +221,7 @@ Docs, sessions and manual links refresh every 5 seconds; GitHub every `githubRef
 - **Repositories**: YUIBoard runs only allow-listed read-only git commands (`rev-parse`, `merge-base --is-ancestor`, `for-each-ref`, `log`, `worktree list`) with `GIT_OPTIONAL_LOCKS=0`, ignoring any inherited `GIT_*` variables such as `GIT_DIR`. It never fetches or checks out, never writes `.git` or the index, never competes with you or your AI for git locks, and never changes any file in the repository.
 - **GitHub**: YUIBoard only reads, through `gh`. Your token stays with `gh` and never appears in the config, caches, logs or pages. If the token has more than read access, the page tells you.
 - **AI session logs**: files are opened read-only and read up to the last complete line, and nothing is created in session directories. Caches and pages keep only metadata and short excerpts, with anything that looks like a key or token masked. Full conversations are never stored or uploaded.
+- **Convention fixes** are the one exception, and they are not made by YUIBoard: when you run `devboard-fix-convention` (or onboard a project for the first time), the AI in your session edits document lines and PR titles, each change only after you confirm it.
 - **The server itself** writes only to `cache/` and `data/` in its own directory. Pages accept only same-origin requests, and the write endpoints (manual links, refresh now) check `Origin` and `Content-Type`. There is no telemetry.
 - `test/readonly.test.mjs` runs a full refresh against a temporary repository and session directory. It checks that `git status`, `.git` and the session files (including their mtimes) are unchanged afterwards.
 

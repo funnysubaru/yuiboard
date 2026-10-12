@@ -1,6 +1,6 @@
 {
   "name": "yuiboard",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "YUIBoard in a Claude Code pane: progress, items to confirm and diagnostics from a local devboard service.",
   "author": {
     "name": "JimmyFu"
@@ -23,6 +23,16 @@
         "en"
       ],
       "default": "auto"
+    },
+    "guard": {
+      "type": "string",
+      "title": "Convention guard",
+      "description": "on: tell Claude the YUIBoard document convention and block task-document writes and PR titles that break it; off: neither.",
+      "options": [
+        "on",
+        "off"
+      ],
+      "default": "on"
     }
   },
   "types": "./hooks/state.d.ts"

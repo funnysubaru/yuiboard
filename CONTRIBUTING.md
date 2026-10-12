@@ -21,7 +21,8 @@ npm test
 |---|---|
 | `src/server.mjs` | HTTP server, SSE, refresh loop |
 | `src/config.mjs` | Loading and validating `devboard.config.json` |
-| `src/docs.mjs`, `src/relations.mjs`, `src/refs.mjs` | Parsing task docs, dependencies and task references (see [CONVENTION.md](CONVENTION.md)) |
+| `src/parse.mjs`, `src/docs.mjs`, `src/relations.mjs`, `src/refs.mjs` | Parsing task docs, dependencies and task references (see [CONVENTION.md](CONVENTION.md)); `parse.mjs` holds the pure parsers so the plugin can import them, `docs.mjs` the file discovery and read-only git |
+| `src/guard.mjs` | Convention checks shared by the board's "Convention issues" and the plugin's convention guard (what a write adds, PR title references) |
 | `src/github.mjs` | Read-only PR queries through `gh api graphql` |
 | `src/sessions/` | Claude Code and Codex session scanners |
 | `src/engine.mjs`, `src/gantt.mjs` | Status, conflicts, next steps and schedule |
@@ -31,7 +32,8 @@ npm test
 | `ops/devboard-ctl.mjs` | Service install / restart and config editing used by the skill |
 | `ops/demo.mjs` | `npm run demo`: builds a fictional project (git repo, docs, PRs for the fake `gh`, a Claude Code session) in the OS temp dir and serves it; nothing is written to this directory |
 | `skills/devboard-add-project/` | The AI skill that onboards a repository |
-| `.claude-plugin/`, `hooks/` | The Claude Code plugin (mod): `hooks/model.mjs` is the pure pane logic (tested by `npm test`), `hooks/register.tsx` the hooks and pane; the repository root is the plugin, so it can import `web/` |
+| `skills/devboard-fix-convention/` | The AI skill that walks "Convention issues" and fixes them one confirmed change at a time |
+| `.claude-plugin/`, `hooks/` | The Claude Code plugin (mod): `hooks/model.mjs` is the pure pane logic (tested by `npm test`), `hooks/register.tsx` the hooks and pane; the repository root is the plugin, so it can import `web/` and the pure `src/` modules. A hooks module may import nothing that imports `node:*`; `test/guard.test.mjs` walks the import graph from `hooks/register.tsx` to keep it that way |
 | `src/summary.mjs` | `GET /api/projects/:id/summary`: the slice of the board the mod reads (the full board is over the mod's 4 MiB fetch limit) |
 | `test/` | `node:test` suites and fixtures (all fictional data) |
 
@@ -60,7 +62,7 @@ npx -p typescript tsc --noEmit -p tsconfig.json --allowJs
 
 Claude Code writes the plugin types to `.claude-plugin/types/` (git-ignored) when it loads the plugin, so run `claude plugin test .` once before `tsc`. Without `--allowJs`, `tsc` reports TS7016 for the `.mjs` modules the hooks import.
 
-When a change reaches the plugin (`hooks/`, `skills/`, or the `web/` modules the hooks import: `web/app.mjs`, `web/md.mjs`, `web/i18n*.mjs`), bump `version` in `.claude-plugin/plugin.json` (and `package.json` with it). `claude plugin update` compares only the version, so without a bump installed copies keep the old code.
+When a change reaches the plugin (`hooks/`, `skills/`, or the modules the hooks import: `web/app.mjs`, `web/md.mjs`, `web/i18n*.mjs`, `src/guard.mjs`, `src/parse.mjs`, `src/refs.mjs`, `src/relations.mjs`, `src/msg.mjs`), bump `version` in `.claude-plugin/plugin.json` (and `package.json` with it). `claude plugin update` compares only the version, so without a bump installed copies keep the old code.
 
 **CI**: GitHub Actions runs `test-linux` and `test-macos` (Node version from `package.json`, full `npm test`, 10-minute limit) on every PR once it is ready for review (draft PRs are skipped; marking a PR ready starts the run), and on pushes to `main`.
 
@@ -73,6 +75,8 @@ Please keep these intact. A PR that breaks one of them can't be merged as it is.
   - git runs only the read-only commands in `GIT_ALLOWED` (`src/docs.mjs`), with `GIT_OPTIONAL_LOCKS=0` and without inherited `GIT_*` variables (`gitEnv()` in `src/config.mjs`).
   - GitHub is read only through `gh api graphql`, and YUIBoard never holds a token.
   - Only `src/store.mjs` writes to disk, and only to `cache/` and `data/`.
+  - The plugin only reads: the service over HTTP, and the task document it is about to check with `$.fs.read`.
+  - `skills/devboard-fix-convention` is an approved exception that is not YUIBoard writing: the AI in the user's session edits document lines and PR titles, each change only after the user confirms it.
   - The one exception is `ops/devboard-ctl.mjs`, which also writes `devboard.config.json` (plus its `.bak`), `cache/devboard.pid` / `.log`, and the LaunchAgent plist or systemd unit that it created itself.
 - **Frontend safety.** Build DOM nodes only with `h()`, `textContent` and `setAttribute`; never `innerHTML`. Session excerpts and error messages go through `src/mask.mjs` first. Markdown in task text is rendered with `h()` too (`mdBlock` / `mdInline`, parsing in the DOM-free `web/md.mjs`), so HTML in docs shows up as literal text; forms outside the supported subset (CONVENTION rule 8) are shown as written with a marker and reported on the Diagnostics page.
 - **Three UI languages.** The Chinese source string is the translation key.
@@ -130,3 +134,9 @@ Run these against a real repository before a release or after a large change. Th
     - Switch Overview, Needs attention and Diagnostics. "Open in browser" and a task number open the web page.
     - Stop the service: the pane shows that it can't connect; start it again and the message goes away within about 5 s.
     - Close the pane, send a message and wait 10 s: it doesn't reopen. `/yuiboard` opens it again.
+16. **Convention guard** (plugin `guard` on, in an isolated copy with a fictional repository, e.g. `npm run demo`):
+    - In a session in the watched repository, ask Claude what it was told about YUIBoard: it repeats the convention summary.
+    - Ask it to add `### 任务 9：…` to a watched `tasks.md`: the write is blocked with the line and the suggested `- [ ] 9 …`, and Claude writes the task line instead. Edit a line next to an existing issue: not blocked.
+    - Ask it to run `gh pr create --draft --title "fix: 任务 999"` (or `gh pr edit` on a PR in a scratch repository): blocked with "task that does not exist"; a title naming an existing task passes.
+    - Set `guard` to `off`: neither the summary nor the blocking happens.
+    - Run `devboard-fix-convention`: every change is shown and applied only after you confirm it; "skip" leaves the item on the Diagnostics page.

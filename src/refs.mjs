@@ -2,7 +2,8 @@
 // 纯函数：不读文件、不读时钟。只认「有标记」的写法（design K6）：完整任务键、`任务 N` / `Task N`、
 // 文档里真实存在的里程碑代号；裸数字一律不认——实物 PR 标题里的裸数字几乎都是版本号 / 章节号（需求 6.4）。
 
-import { compareTaskNumbers } from './docs.mjs';
+import { compareTaskNumbers } from './parse.mjs';
+import { msg, joinList } from './msg.mjs';
 
 const NUM = 'T?\\d+[a-z]?(?:\\.\\d+[a-z]?)*';
 const DASH = '[–—〜-]';
@@ -221,4 +222,83 @@ function matchNum(doc, ref) {
     .filter((t) => depth(t.number) === depth(a) && parent(t.number) === parent(a)
       && compareTaskNumbers(a, t.number) <= 0 && compareTaskNumbers(t.number, b) <= 0)
     .map((t) => t.key);
+}
+
+// ---- 引用的写法问题（N9 B；N27 起 engine 与 PR 标题拦截共用）----
+
+// N17：docRef 分支线的文档 docId 带前缀（next:ADR-0033-…），PR 里写的是不带前缀的原名（alias）。
+// 候选里别的文档已占用这个原名时不认（未归类 PR 用全部文档，原名归主工作区那份）。
+// N9：ADR 简称 `ADR-0033`（文件名开头的编号）也是别名：候选里恰好一篇时指向它；多篇时值为 docId 数组，
+// 写成任务键（ADR-0033#64）报歧义，单独出现只用于收窄到这几篇。分支线 docFilter 先过滤，所以个人版 / next: 线各认各的。
+export function aliasMap(cands) {
+  const ids = new Set(cands.map((d) => d.docId));
+  const alias = new Map(cands.filter((d) => d.alias && !ids.has(d.alias)).map((d) => [d.alias, d.docId]));
+  for (const [short, list] of Map.groupBy(cands.filter((d) => d.adr?.number), (d) => `ADR-${d.adr.number}`)) {
+    if (!ids.has(short) && !alias.has(short)) alias.set(short, list.length === 1 ? list[0].docId : list.map((d) => d.docId));
+  }
+  return alias;
+}
+export function unalias(raw, alias) {
+  if (!alias.size) return raw;
+  const back = (id) => alias.get(id) ?? id;
+  // 有歧义的简称写成的任务键保持原样，resolveRefs 记 missing 后由 linkPrs 改记歧义
+  const key = (k) => { const i = k.lastIndexOf('#'); const d = i < 0 ? null : back(k.slice(0, i)); return d === null || Array.isArray(d) ? k : `${d}${k.slice(i)}`; };
+  return { ...raw, docIds: raw.docIds.flatMap(back), keys: raw.keys.map(key), partial: raw.partial.map(key) };
+}
+
+// unknown（像引用却对不上，N9）也算「有引用」：标题写了 ADR-0099#3 就以标题为准、报出来，不退到描述去误读。
+export const hasRefs = (r) => r.keys.length + r.nums.length + r.codes.length + r.unknown.length > 0;
+// 列表太长只列前 5 个，detail 是给人看的一句话
+export const brief = (keys) => (keys.length > 5 ? msg`${joinList(keys.slice(0, 5))} 等 ${keys.length} 个` : joinList(keys));
+
+/** extractRefs 的选项：候选文档的 docId 与别名、文档里真实存在的里程碑代号 */
+export const refOptions = (cands, alias) => ({
+  knownDocIds: [...cands.map((d) => d.docId), ...alias.keys()],
+  knownCodes: cands.flatMap((d) => (d.groups ?? []).map((g) => g.code).filter(Boolean)),
+});
+
+/**
+ * 解析一段引用并给出写法问题（design §3.5、§8 第 7 条）：歧义、不存在、只对上重复编号、像引用却对不上
+ * （大小写写错的任务键给出正确写法）。ADR 简称在候选里对应多篇时改记歧义，不猜。
+ * @param {object} raw unalias 之后的 extractRefs 结果
+ * @param {object[]} cands 候选文档（分支线 docFilter 过滤后）
+ * @param {Map} alias aliasMap(cands)
+ * @param {string[]} knownDocIds refOptions(cands, alias).knownDocIds
+ * @param {string} where 句首的出处，如「PR 标题」
+ * @returns {{ res: ReturnType<typeof resolveRefs>, issues: string[] }}
+ */
+export function checkRefs(raw, cands, alias, knownDocIds, where) {
+  const res = resolveRefs(raw, cands);
+  for (const m of [...res.missing]) {
+    const i = m.lastIndexOf('#');
+    const ids = i > 0 && alias.get(m.slice(0, i));
+    if (!Array.isArray(ids)) continue;
+    res.missing.splice(res.missing.indexOf(m), 1);
+    res.ambiguous.push({ raw: m, candidates: ids.map((id) => `${id}${m.slice(i)}`) });
+  }
+  const issues = [];
+  for (const a of res.ambiguous) issues.push(msg`${where}里的「${a.raw}」有歧义，可能是 ${brief(a.candidates)}`);
+  for (const m of res.missing) {
+    // 3.2 交接：只命中重复编号任务时 resolveRefs 也记 missing，这里改口，别让人以为任务不存在
+    issues.push(onlyDuplicates(m, cands, raw.docIds)
+      ? msg`${where}里的「${m}」对应的编号在文档里重复出现，无法确定是哪一条`
+      : msg`${where}引用了不存在的任务：${m}`);
+  }
+  for (const u of raw.unknown ?? []) {
+    // 大小写写错的任务键给出正确写法；其余给通用建议
+    const i = u.lastIndexOf('#');
+    const id = i > 0 && knownDocIds.find((x) => x.toLowerCase() === u.slice(0, i).toLowerCase());
+    issues.push(id ? msg`${where}里的「${u}」像任务引用，但对不上这条分支线的文档或里程碑代号；建议写成「${id + u.slice(i)}」`
+      : msg`${where}里的「${u}」像任务引用，但对不上这条分支线的文档或里程碑代号；建议写成「<spec 名>#<编号>」或文档里已有的里程碑代号`);
+  }
+  return { res, issues };
+}
+
+// 引用（编号或完整任务键）在候选里只对得上重复编号的任务。范围与代号不在此列。
+// 裸编号跟着引用里写的文档收窄（与 resolveRefs 同口径）：「ADR-0030 … 任务 6.1」只看 ADR-0030，别处的重复编号不算。
+export function onlyDuplicates(ref, cands, docIds = []) {
+  const i = ref.lastIndexOf('#');
+  const num = ref.slice(i + 1);
+  const docs = i >= 0 ? cands.filter((d) => d.docId === ref.slice(0, i)) : docIds.length ? cands.filter((d) => docIds.includes(d.docId)) : cands;
+  return docs.some((d) => (d.tasks ?? []).some((t) => t.duplicate && t.number === num));
 }

@@ -188,7 +188,13 @@ export async function startServer({
         id: rt.project.id,
         name: rt.project.name,
         // 顶栏分支线分段按钮与前端「文档归哪条分支线」用（任务 3.6）；不含工作区路径等其余配置
-        branchLines: (rt.project.branchLines ?? []).map((b) => ({ id: b.id, name: b.name, docFilter: b.docFilter ?? null })),
+        branchLines: (rt.project.branchLines ?? []).map((b) => ({ id: b.id, name: b.name, base: b.base ?? null, docFilter: b.docFilter ?? null })),
+        // N27：mod 的写入拦截据此判断 AI 写的是不是任务文档（含还没写出来的新文件）并按同样的选项解析；
+        // 只给来源类型、路径、排除规则与两个解析正则（branchLines 的 base 用来按分支线认 PR 标题）
+        docSources: (rt.project.docSources ?? []).map((d) => ({ type: d.type, path: d.path ?? null, files: d.files ?? [] })),
+        excluded: rt.project.excluded ?? [],
+        milestoneCodePattern: rt.project.milestoneCodePattern ?? null,
+        prerequisiteIdPattern: rt.project.prerequisiteIdPattern ?? null,
         errors: rt.errors,
         refreshError: rt.refreshError,
         freshness: rt.payload?.board.freshness ?? null,

@@ -137,7 +137,10 @@ test('项目列表与看板：坏项目返回明确错误而不是空看板，�
   const list = json(await request(s.port, '/api/projects'));
   assert.deepEqual(list.errors, []);
   assert.deepEqual(list.projects.map((p) => p.id), ['good', 'bad']);
-  assert.deepEqual(list.projects[0].branchLines, [{ id: 'main', name: '主线', docFilter: null }], '顶栏分支线按钮用');
+  assert.deepEqual(list.projects[0].branchLines, [{ id: 'main', name: '主线', base: 'main', docFilter: null }], '顶栏分支线按钮用；base 给 mod 认 PR 标题（N27）');
+  assert.deepEqual(list.projects[0].docSources, [{ type: 'spec-dir', path: '.claude/specs', files: [] }], 'mod 判断任务文档用（N27）');
+  assert.deepEqual(list.projects[0].excluded, []);
+  assert.equal(list.projects[0].milestoneCodePattern, null);
   const [good, bad] = list.projects;
   assert.deepEqual(good.errors, []);
   assert.equal(bad.errors[0].field, 'repo.path');
