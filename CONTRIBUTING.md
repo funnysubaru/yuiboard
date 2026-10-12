@@ -60,6 +60,8 @@ npx -p typescript tsc --noEmit -p tsconfig.json --allowJs
 
 Claude Code writes the plugin types to `.claude-plugin/types/` (git-ignored) when it loads the plugin, so run `claude plugin test .` once before `tsc`. Without `--allowJs`, `tsc` reports TS7016 for the `.mjs` modules the hooks import.
 
+When a change reaches the plugin (`hooks/`, `skills/`, or the `web/` modules the hooks import: `web/app.mjs`, `web/i18n*.mjs`), bump `version` in `.claude-plugin/plugin.json` (and `package.json` with it). `claude plugin update` compares only the version, so without a bump installed copies keep the old code.
+
 **CI**: GitHub Actions runs `test-linux` and `test-macos` (Node version from `package.json`, full `npm test`, 10-minute limit) on every PR, drafts included, and on pushes to `main`.
 
 ## Hard constraints
