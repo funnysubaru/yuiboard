@@ -9,3 +9,6 @@ devboard.config.json.rev
 .playwright-mcp/
 output/
 .serena/
+# Claude Code 加载 mod 时在插件目录里生成的类型（N25），每次加载重写
+.claude-plugin/types/
+/tsconfig.json

@@ -67,6 +67,37 @@ mkdir -p ~/.agents/skills && ln -s "$PWD/skills/devboard-add-project" ~/.agents/
 
 AI が `devboard.config.json` を変更するのは `devboard-ctl save` / `remove` 経由だけで、その前に `devboard.config.json.bak` へバックアップします。追加したリポジトリは読むだけです。
 
+## Claude Code の中で見る（mod）
+
+このリポジトリは Claude Code のプラグインでもあります。ターミナルでもデスクトップアプリでも、会話の横に YUIBoard のペインを開き、そのセッションが属するプロジェクトを表示します。全体の数字、「このセッションで作業中」のタスクのカード、タスクツリー、要確認、診断です。データは動いている YUIBoard サービスから読み、何も変更しません。Claude Code 2.1.293–2.1.296 で確認済みです。
+
+Claude Code のセッションでインストールします（Claude Code 2.1.275 以降）。
+
+```
+/plugin install yuiboard --marketplace funnysubaru/yuiboard
+```
+
+プラグインと YUIBoard サービスは同じバージョンにしてください。サービスを更新するとき（`git pull` して再起動）は、プラグインも `claude plugin update yuiboard@yuiboard` で更新します。
+
+チェックアウトの変更を試すときは、チェックアウトから直接読み込めます（リポジトリのルートがプラグインです）。このターミナルセッションだけなら `claude --plugin-dir /path/to/yuiboard`、デスクトップアプリを含むすべてのセッションなら `~/.claude/settings.json` の `env` に `"CLAUDE_CODE_PLUGIN_DIRS": "/path/to/yuiboard"` を加えて新しいセッションを開きます。この場合、プラグインの id は `yuiboard@yuiboard` ではなく `yuiboard@inline` です。
+
+設定項目：
+
+| 項目 | 既定値 | 意味 |
+|---|---|---|
+| `url` | `http://127.0.0.1:4317` | YUIBoard サービスのアドレス。プラグインと同じバージョンのサービスが必要です |
+| `lang` | `auto` | ペインの言語：`auto`（Claude Code に合わせる）、`zh`、`ja`、`en` |
+
+```sh
+echo '{"url":"http://127.0.0.1:4317"}' | claude plugin configure yuiboard@yuiboard --values-stdin
+```
+
+- セッションがプロジェクトに対応づけられると、ペインがセッションごとに一度だけ自動で開きます。対応づけの条件は、セッションがそのプロジェクトのタスクに関連づいていること、または作業ディレクトリが監視中のワークスペースの中にあることです。閉じたあとは自動では開きません。`/yuiboard` で開き直せます。
+- カードにはセッションが関連づいたタスクが出ます。PR タイトルと同じように「`<ドキュメント>` のタスク 3.2」と名指ししてください。数字だけでは関連づきません。作業中のタスクが複数あるときは、最後に動きのあったものが先頭です。サブエージェントは別々に数えるので、割り振ったタスクはそれぞれのサブエージェントが動いている間「実行中」になります。
+- ターミナルではキーボードで操作します。Ctrl+X のあと Tab でペインに入り、Tab か矢印キーで移動、Enter で押す、Esc で入力欄に戻ります。全画面モードで 110 桁以上あるときは、ペインが右側に固定され、マウスでも押せます。タスク番号と「ブラウザで開く」は Web ページを開きます。OSC 8 リンクに対応していないターミナルでは、ラベルのあとにアドレスが表示されます。
+- 設定項目の変更は動いているセッションにも反映されます。プラグインのファイルを変えても反映されないので、新しいセッションを開いてください。
+- プラグインには skill `skills/devboard-add-project` も入っています。インストールしたプラグインはコピーから動くので、この skill は何かを書き込む前に YUIBoard のチェックアウトの場所を尋ねます。前の節のとおりシンボリックリンクもしてあると Claude Code には二つ見えますが、どちらを使っても構いません。Codex 用の `~/.agents/skills` のリンクには影響しません。
+
 ## サービスとして動かす（macOS / Linux）
 
 サービスのインストールや再起動は `devboard-ctl` で行います。plist や unit ファイルを手で編集する必要はありません。

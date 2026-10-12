@@ -2,17 +2,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 
-import { scan } from './i18n-scan.mjs';
+import { scan, cjkInCode } from './i18n-scan.mjs';
 import { parseTasksDoc } from '../src/docs.mjs';
 import { computeBoard } from '../src/engine.mjs';
 import { t, tx, setLang, getLang, pickLang, SLOTS } from '../web/i18n.mjs';
 import { msg, joinList } from '../src/msg.mjs';
+import { summarize } from '../src/summary.mjs';
+import { extractRefs } from '../src/refs.mjs';
+import { paneOf, focusOf, commandText } from '../hooks/model.mjs';
 import { say, logLang } from '../src/say.mjs';
 import ja, { server as jaServer } from '../web/i18n-ja.mjs';
 import en, { server as enServer } from '../web/i18n-en.mjs';
 
 const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
-const WEB = ['web/app.mjs', 'web/svg.mjs'];
+const WEB = ['web/app.mjs', 'web/svg.mjs', 'hooks/model.mjs']; // model.mjs：Claude Code mod 的全部界面文案（N25）
 const SRC = [
   ...readdirSync(new URL('../src', import.meta.url)).filter((f) => f.endsWith('.mjs')).map((f) => `src/${f}`),
   ...readdirSync(new URL('../src/sessions', import.meta.url)).filter((f) => f.endsWith('.mjs')).map((f) => `src/sessions/${f}`),
@@ -49,6 +52,61 @@ const allKeys = () => {
 
 test('i18n：前端没有漏包 t() 的中文字面量', () => {
   for (const f of WEB) assert.deepEqual(scan(read(f), ['t']).bare.map((b) => `${f}:${b.line} ${b.text}`), []);
+});
+
+test('i18n：hooks/*.tsx 的代码（注释除外）不含中日文字符，文案都由 hooks/model.mjs 产出（N25 需求 8.3）', () => {
+  const tsx = readdirSync(new URL('../hooks', import.meta.url)).filter((f) => f.endsWith('.tsx')).map((f) => `hooks/${f}`);
+  assert.ok(tsx.length > 0);
+  for (const f of tsx) assert.deepEqual(cjkInCode(read(f)).map((b) => `${f}:${b.line} ${b.text}`), []);
+});
+
+test('i18n：TSX 检查的回归用例——JSX 文本写中文、相邻两个 t() 都报，只有中文注释不报（N25 review）', () => {
+  // 现有 scan() 不认 JSX：这两个反例它都漏
+  assert.deepEqual(cjkInCode('const A = () => (\n  <Text>未翻译的文字</Text>\n);').map((b) => b.line), [2]);
+  assert.deepEqual(cjkInCode("const B = () => <Box><Text>{t('总览')}</Text><Text>{t('诊断')}</Text></Box>;").map((b) => b.line), [1]);
+  assert.deepEqual(cjkInCode([
+    '// 行注释：中文',
+    '/* 块注释',
+    '   跨行：日本語 */',
+    "const url = 'http://127.0.0.1:4317'; // 字符串里的 // 不是注释",
+    '/** 文档注释 */ export const C = () => <Text>{label}</Text>;',
+  ].join('\n')), []);
+  assert.deepEqual(cjkInCode("const u = 'http://x/中文';").map((b) => b.line), [1], '字符串里的 // 之后照样检查');
+});
+
+test('i18n：mod 面板（paneOf）在日 / 英界面里不残留中文（N25 需求 8.1）', (t_) => {
+  t_.after(() => setLang('zh'));
+  // 用户内容全用 ASCII：输出里剩下的中日文只可能来自漏译的界面文案
+  const md = '# Plan\n\n## Phase one\n\n- [ ] 1 Build the thing\n  - [ ] 1.1 Sub step\n- [ ] 2 Next (depends on 1)\n- [x] 3 Done thing\n\nstray line - [ ] x\n';
+  const docs = [{ docId: 'plan', archived: false, sourceType: 'spec-dir', sourceLabel: 'spec', path: 'docs/plan/tasks.md', workspaceId: 'repo', kind: 'tasks', ...parseTasksDoc(md, 'plan') }];
+  const pr = (number, title, state) => ({ number, title, body: '', url: '', state, isDraft: false, baseRefName: 'main', headRefName: `b${number}`, labels: [],
+    createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-20T00:00:00Z', readyAt: null, mergedAt: state === 'MERGED' ? '2026-09-21T00:00:00Z' : null, closedAt: null,
+    mergeCommit: state === 'MERGED' ? { oid: 'f'.repeat(40) } : null });
+  const signal = { kind: 'prompt', at: '2026-09-25T23:50:00.000Z', until: '2026-09-25T23:59:00.000Z', file: 'r/s.jsonl', line: 1, snippet: 'plan task 1',
+    refs: extractRefs('plan task 1', { knownDocIds: ['plan'], knownCodes: [] }) };
+  const sessions = [{ source: 'claude-code', id: 's1', files: ['r/s.jsonl'], cwds: ['/ws/repo'], branches: [], title: 'Session one', firstAt: signal.at, lastAt: signal.until,
+    lastSummary: 'x', signals: [signal], aiOnlyMentions: 0, brokenLines: 0 }];
+  const board = computeBoard(docs, [pr(5, 'Task 2', 'MERGED'), pr(6, 'Task 9', 'OPEN'), pr(7, 'chore: misc', 'OPEN')], sessions, [], {},
+    { id: 'demo', repo: { path: '/ws/repo' } }, '2026-09-26T00:00:00.000Z');
+  board.workspaces = [{ id: 'repo', path: '/ws/repo', branch: 'main', commit: 'a'.repeat(40), detached: false, error: null }];
+  const summary = summarize(board);
+  const projects = { errors: [], warnings: [], projects: [{ id: 'demo', name: 'Demo', branchLines: [], errors: [], refreshError: null }] };
+  const now = Date.parse('2026-09-26T00:00:00Z');
+  const base = { summary, projects, projectId: 'demo', toggled: [], focus: focusOf(summary, 's1'), url: 'http://127.0.0.1:4317', now, problems: [] };
+  const problems = [{ kind: 'offline', url: 'http://127.0.0.1:4317', message: 'ECONNREFUSED' }, { kind: 'oversize' },
+    { kind: 'http', status: 500, messages: ['m1', 'm2', 'm3', 'm4'] }];
+  const panes = () => [
+    ...['overview', 'check', 'diag'].map((view) => paneOf({ ...base, view })),
+    paneOf({ ...base, view: 'overview', focus: null, problems }),
+    paneOf({ ...base, summary: null, projectId: null, view: 'overview', problems }),
+  ];
+  const texts = (p) => [...p.header, ...p.banners, ...p.focus, ...p.body, ...(p.more ? [p.more] : [])].flatMap((r) => r.texts);
+  const run = (l) => { setLang(l); return [commandText(), ...panes().flatMap(texts)]; };
+  const zh = run('zh');
+  assert.ok(zh.some((s) => s.includes('本会话正在做')) && zh.some((s) => s.includes('当前目录不在看板的项目里')), '夹具覆盖到 mod 自己的文案');
+  assert.deepEqual(run('en').filter((s) => /[぀-ヿ㐀-鿿！-｠]/.test(s)), [], 'en 残留中日文');
+  // 日文译文本身含汉字：查与中文输出逐条相同、又含汉字的（漏译会原样回落成中文）
+  assert.deepEqual(run('ja').filter((s, i) => /[㐀-鿿]/.test(s) && s === zh[i]), [], 'ja 漏译');
 });
 
 test('i18n：服务端会显示的中文都用 msg 标记', () => {

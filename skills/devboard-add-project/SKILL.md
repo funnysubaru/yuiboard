@@ -26,6 +26,7 @@ Talk to the user in the language they write in. This skill is in English, but ev
    ```
 
    With `<DEVBOARD>` in hand, check `test -f "<DEVBOARD>/src/server.mjs"`. Missing → **Stop** and ask the user where devboard is installed (the skill may have been copied rather than symlinked).
+   If `<DEVBOARD>` is inside `~/.claude/plugins/` (the skill came with the plugin installed from a marketplace, which runs from a copy), **Stop** as well and ask the user where their YUIBoard checkout is; use that path as `<DEVBOARD>`. Never write config or install a service from the plugin copy.
 2. Watched repository: `git rev-parse --show-toplevel`; the result is `<REPO>`. Fails → **Stop**: the current directory is not in a git repository.
 3. Existing project:
 

@@ -1,0 +1,29 @@
+{
+  "name": "yuiboard",
+  "version": "0.1.0",
+  "description": "YUIBoard in a Claude Code pane: progress, items to confirm and diagnostics from a local devboard service.",
+  "author": {
+    "name": "JimmyFu"
+  },
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "devboard URL",
+      "description": "Address of the local devboard service.",
+      "default": "http://127.0.0.1:4317"
+    },
+    "lang": {
+      "type": "string",
+      "title": "Language",
+      "description": "Pane language; auto follows the Claude Code language setting.",
+      "options": [
+        "auto",
+        "zh",
+        "ja",
+        "en"
+      ],
+      "default": "auto"
+    }
+  },
+  "types": "./hooks/state.d.ts"
+}

@@ -675,7 +675,12 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
     };
     const name = s.title ? msg`会话「${s.title}」` : msg`会话 ${s.id}`;
     let focus = [];
-    let onBranch = [];
+    // 子 agent 各算各的（owner 2026-10-12）：认得出的子 agent（有 agent 信号）一路一个 lane = 派它的 toolUseId。
+    // 派给它的任务不改主线焦点，只由它自己的记录续活动；派活没点到任务（或没采信）时，冻结派活那一刻的主线焦点给它
+    // （空焦点也冻结），主线之后换任务不影响它。分支关联也按路分开：子 agent 在别的分支上干活不改主线的分支任务。
+    const lanes = new Set(s.signals.filter((g) => g.kind === 'agent').map((g) => g.lane));
+    const laneTasks = new Map();
+    const branchTasks = new Map(); // lane（主线为 null）→ 当前分支 = 某 PR head 时该 PR 的任务
     for (const g of s.signals) {
       if ((g.kind === 'prompt' || g.kind === 'dispatch') && hasTaskRefs(g.refs)) {
         const res = resolveRefs(g.refs, cands, ctxIds);
@@ -694,8 +699,14 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
           issue(g, onlyDuplicates(m, cands) ? msg`${name}里的「${m}」对应的编号在文档里重复出现，无法确定是哪一条`
             : msg`${name}引用了不存在的任务：${m}`);
         }
-        focus = res.tasks;
-        for (const k of focus) hit(k, g, g.until, msg`${SIGNAL_TEXT[g.kind]}：「${g.snippet}」`);
+        const note = msg`${SIGNAL_TEXT[g.kind]}：「${g.snippet}」`;
+        if (g.kind === 'dispatch' && lanes.has(g.toolUseId)) {
+          laneTasks.set(g.toolUseId, res.tasks.length ? res.tasks : focus);
+          for (const k of res.tasks) hit(k, g, g.at, note);
+        } else {
+          focus = res.tasks;
+          for (const k of focus) hit(k, g, g.until, note);
+        }
       } else if (g.kind === 'edit') {
         for (const d of byPath(g.docPath)) {
           for (const t of d.tasks ?? []) if (!t.duplicate && g.taskNums.includes(t.number)) hit(t.key, g, g.until, msg`改了 ${d.docId} 的任务行 ${t.number}`);
@@ -703,12 +714,15 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
       } else if (g.kind === 'pr-link') {
         for (const k of prInfo.get(g.pr)?.tasks ?? []) hit(k, g, g.until, msg`会话登记了 PR #${g.pr}`);
       } else if (g.kind === 'branch') {
-        onBranch = [];
+        const list = [];
         for (const p of prs.filter((x) => x.headRefName === g.branch)) {
-          for (const k of prInfo.get(p.number)?.tasks ?? []) { hit(k, g, g.until, msg`会话分支 ${g.branch} = PR #${p.number} 的 head`); onBranch.push(k); }
+          for (const k of prInfo.get(p.number)?.tasks ?? []) { hit(k, g, g.until, msg`会话分支 ${g.branch} = PR #${p.number} 的 head`); list.push(k); }
         }
+        branchTasks.set(g.lane ?? null, list);
       }
-      for (const k of [...focus, ...onBranch]) hit(k, g, g.until, null);
+      if (g.kind === 'dispatch' && lanes.has(g.toolUseId) && !laneTasks.has(g.toolUseId)) laneTasks.set(g.toolUseId, focus);
+      const own = g.lane ? laneTasks.get(g.lane) ?? focus : focus;
+      for (const k of [...own, ...(branchTasks.get(g.lane ?? null) ?? [])]) hit(k, g, g.until, null);
     }
     if (per.size) linkedIds.add(s.id);
     links.push(...per.values());

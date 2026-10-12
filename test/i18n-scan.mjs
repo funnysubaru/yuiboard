@@ -93,3 +93,35 @@ export function scan(src, tags) {
   code(0, false);
   return { keys, bare };
 }
+
+/**
+ * 去掉 // 与 /* *\/ 注释后，找出仍含中日文字符的行（N25：hooks/*.tsx 的代码不写文案，注释可用中文）。
+ * 认三种引号的字符串（里面的 // 不是注释，如 URL），单 / 双引号到行尾为止（JSX 文本里的 don't 不吞后面的行）。
+ * ponytail: 不认 JSX 与正则字面量；正则里紧挨的 // 会被当成注释开头吞掉该行余下部分。TSX 只做摆放、没有正则时够用，
+ * 真写了这种正则再换成按 TS 语法树剥注释。
+ * @returns {{ line: number, text: string }[]}
+ */
+export function cjkInCode(src) {
+  let out = '';
+  for (let i = 0; i < src.length;) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') { const j = src.indexOf('\n', i); i = j < 0 ? src.length : j; continue; }
+    if (c === '/' && src[i + 1] === '*') {
+      const j = src.indexOf('*/', i + 2);
+      const end = j < 0 ? src.length : j + 2;
+      out += src.slice(i, end).replace(/[^\n]/g, ''); // 保留换行，行号不变
+      i = end;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && (c === '`' || src[j] !== '\n')) j += src[j] === '\\' ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out.split('\n').flatMap((text, k) => (CJK.test(text) ? [{ line: k + 1, text: text.trim() }] : []));
+}

@@ -642,6 +642,69 @@ test('⑤ 子 agent 派活即进行中；edit 直接关联被改的任务行', (
   assert.deepEqual([t['4'].status, t['4'].sessions[0].evidence.map((e) => e.note)], ['in_progress', ['改了 t 的任务行 4']]);
 });
 
+test('子 agent 各算各的：派给认得出的子 agent 的任务不改主线焦点，由它自己的记录续活动；没点到任务的子 agent 续主线焦点', () => {
+  const docs = [withPath(inline(SIMPLE))];
+  const s = session('s5', [
+    say(docs, '做任务 4', at(60), at(59)),
+    { ...say(docs, '实现任务 1', at(50), at(50), 'dispatch'), toolUseId: 'ta' },
+    { ...say(docs, '实现任务 2', at(50), at(49), 'dispatch'), toolUseId: 'tb' },
+    sig('agent', at(49), at(2), { lane: 'ta' }), // 还在干
+    sig('agent', at(49), at(30), { lane: 'tb' }), // 30 分钟前做完
+    sig('agent', at(20), at(1), { lane: 'tc' }), // 派活没写任务（如找代码）：算主线焦点 4 的活动
+  ]);
+  const t = byNum(sBoard(docs, [s]));
+  const l = (n) => [t[n].sessions[0].lastAt, t[n].sessions[0].activity];
+  assert.deepEqual(l('1'), [at(2), 'running']);
+  assert.deepEqual(l('2'), [at(30), 'recent'], '各自的子 agent 停了就不再算运行中，不被别的子 agent 带着');
+  assert.deepEqual(l('4'), [at(1), 'running'], '派活不改主线焦点');
+  assert.deepEqual(t['1'].sessions[0].evidence.map((e) => e.kind), ['dispatch']);
+  // 认不出的子 agent（没有 agent 信号）：照旧，派活改主线焦点
+  const old = byNum(sBoard(docs, [session('s5', [say(docs, '做任务 4', at(60), at(59)), { ...say(docs, '实现任务 1', at(50), at(2), 'dispatch'), toolUseId: 'tz' }])]));
+  assert.deepEqual([old['1'].sessions[0].lastAt, old['4'].sessions[0].lastAt], [at(2), at(59)]);
+});
+
+test('子 agent 各算各的：没写任务的派活冻结派活那一刻的主线焦点（空焦点也冻结），主线之后换任务不跟着变', () => {
+  const docs = [withPath(inline(SIMPLE))];
+  const t = byNum(sBoard(docs, [session('s5', [
+    { ...say(docs, '（虚构）先派个找代码的', at(70), at(70), 'dispatch'), toolUseId: 'te' }, // 此时主线还没焦点
+    sig('agent', at(69), at(1), { lane: 'te' }),
+    say(docs, '做任务 1', at(60), at(59)),
+    { ...say(docs, '（虚构）找一下相关代码', at(58), at(58), 'dispatch'), toolUseId: 'td' },
+    sig('agent', at(57), at(45), { lane: 'td' }),
+    say(docs, '转去做任务 2', at(50), at(40)),
+    sig('touch', at(30), at(2), { docPath: 't/tasks.md', lane: 'td' }), // 主线换任务之后，子 agent 还在读文档、干活
+  ])]));
+  const l = (n) => [t[n].sessions[0]?.lastAt, t[n].sessions[0]?.activity];
+  assert.deepEqual(l('1'), [at(2), 'running'], '找代码的子 agent 一直算在派它时的任务 1 上');
+  assert.deepEqual(l('2'), [at(40), 'recent'], '主线换到任务 2 后，旧子 agent 的活动不续到 2');
+  assert.equal(t['1'].sessions[0].firstAt, at(60), '空焦点时派出的 te 不给任何任务续活动');
+});
+
+test('子 agent 各算各的：子 agent 的分支信号只管它自己这一路，不续、不改主线焦点与主线分支', () => {
+  const docs = [withPath(inline(SIMPLE))];
+  const prs = [pr(11, { title: '任务 4', headRefName: 'feat-4' })];
+  const t = byNum(sBoard(docs, [session('s6', [
+    say(docs, '做任务 1', at(60), at(55)),
+    { ...say(docs, '实现任务 2', at(54), at(54), 'dispatch'), toolUseId: 'tb' },
+    sig('agent', at(53), at(1), { lane: 'tb' }),
+    sig('branch', at(30), at(1), { branch: 'child-wt', lane: 'tb' }), // 子 agent 在独立 worktree：不是任何 PR 的 head
+    sig('branch', at(20), at(1), { branch: 'feat-4', lane: 'tb' }), // 子 agent 切到 PR #11 的分支：只关联到它这一路
+  ])], { prs }));
+  assert.deepEqual([t['1'].sessions[0].lastAt, t['1'].sessions[0].activity], [at(54), 'recent'], '主线任务 1 停在主线最后一条记录');
+  assert.deepEqual([t['2'].sessions[0].lastAt, t['2'].sessions[0].activity], [at(1), 'running']);
+  assert.deepEqual([t['4'].sessions[0].lastAt, t['4'].sessions[0].evidence.map((e) => e.note)], [at(1), ['会话分支 feat-4 = PR #11 的 head']]);
+  // 反过来：主线在 PR 分支上，子 agent 切去独立 worktree，不清掉主线的分支任务
+  const m = byNum(sBoard(docs, [session('s6', [
+    sig('branch', at(60), at(60), { branch: 'feat-4' }),
+    say(docs, '做任务 1', at(59), at(55)),
+    { ...say(docs, '实现任务 2', at(54), at(54), 'dispatch'), toolUseId: 'tb' },
+    sig('agent', at(53), at(1), { lane: 'tb' }),
+    sig('branch', at(30), at(1), { branch: 'child-wt', lane: 'tb' }),
+    say(docs, '看一下 t 的文档', at(10), at(5)), // 主线继续干活（只写 docId，不改焦点）
+  ])], { prs }));
+  assert.deepEqual([m['4'].sessions[0].lastAt, m['1'].sessions[0].lastAt], [at(5), at(5)], '主线的分支任务照常随主线活动');
+});
+
 test('⑥ pr-link → 该 PR 的任务；分支 = PR head → 该 PR 的任务且切分支前一直计活动；PR 状态优先于会话', () => {
   const docs = [withPath(inline(SIMPLE))];
   const prs = [pr(10, { title: '任务 1' }), pr(11, { title: '任务 4', state: 'CLOSED', headRefName: 'task-4' })];

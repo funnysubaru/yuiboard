@@ -1,0 +1,17 @@
+{
+  "name": "yuiboard",
+  "owner": {
+    "name": "JimmyFu"
+  },
+  "description": "YUIBoard, a read-only progress board for AI-assisted development, as a Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "yuiboard",
+      "source": "./",
+      "description": "YUIBoard in a Claude Code pane: progress, items to confirm and diagnostics from a local YUIBoard service.",
+      "author": {
+        "name": "JimmyFu"
+      }
+    }
+  ]
+}

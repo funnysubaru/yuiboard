@@ -10,7 +10,7 @@ import { t, tx, LANGS, LANG_KEY, getLang } from './i18n.mjs';
 // 界面语言（N22 任务 22.3）：界面文案一律 t`…`（中文原文即翻译键），服务端发来的中文说明套 tx()；
 // 用户内容（任务标题、文档名、PR 标题、路径、会话片段）不翻。注意别把局部变量起名叫 t，会遮住翻译函数。
 /** <html lang> 与日期格式用的语言标签。 */
-const HTML_LANG = { zh: 'zh-CN', ja: 'ja', en: 'en' };
+export const HTML_LANG = { zh: 'zh-CN', ja: 'ja', en: 'en' };
 // 句子里要嵌节点（如任务标题的 Markdown）时，插值写 SLOT，翻译后在 SLOT 处切开放回节点：各语言语序不同，不能拆成前后两段文案。
 const SLOT = '\u0001';
 const withNode = (s, node) => { const [a, b = ''] = s.split(SLOT); return [a, node, b].filter((x) => x !== ''); };
@@ -127,7 +127,7 @@ function syncHash(state) {
 }
 
 // 同文档的任务只写编号，跨文档写完整任务键（重复编号保留 `~2` 后缀，能区分是哪一条）。
-const refLabel = (key, docId) => (key.startsWith(`${docId}#`) ? key.slice(docId.length + 1) : key);
+export const refLabel = (key, docId) => (key.startsWith(`${docId}#`) ? key.slice(docId.length + 1) : key);
 
 /** 相对时间，给顶栏「文档 3 秒前」用；绝对时间放在悬停提示里。 */
 export function ago(iso, now) {
@@ -669,7 +669,7 @@ function evText(e) {
 const VIA_TEXT = { title: t('任务标题'), body: t('任务正文'), 'group-note': t('分组说明'), mermaid: t('Mermaid 任务图'), 'prereq-table': t('前置条件表') };
 
 /** 「为什么是这个状态」：命中的判定规则（需求 8.2）写成人话；规则编号放悬停提示（需求 8.8）。 */
-function statusWhy(view, task) {
+export function statusWhy(view, task) {
   if (!view.status) return t('任务已作废（整行删除线或写明作废），不计入进度');
   switch (view.rule) {
     case '8.2-1': return view.status === 'in_review' ? t('关联 PR 是 draft，等 review') : t('关联 PR 是 ready（非 draft），还没合并');
@@ -1357,7 +1357,7 @@ function lineBoard(board, state) {
 }
 
 /** 全局统计，口径同 engine summarize 的 all（未归档、未作废任务；父子各算一条），但按传入看板的文档算，分支线筛选后随之变。 */
-function overallStats(board) {
+export function overallStats(board) {
   const views = new Map(board.tasks.map((v) => [v.key, v]));
   const live = board.docs.filter((d) => !d.archived).flatMap((d) => d.tasks).map((t) => views.get(t.key)).filter((v) => v?.status);
   const counts = Object.fromEntries(Object.keys(STATUS_UI).map((s) => [s, 0]));
@@ -1769,8 +1769,8 @@ function checkBox(board, state, c) {
 // ---------------- 诊断（任务 6.5） ----------------
 
 // design §8 最低约定的条目号 → 名称（engine 的 diagnostics.convention[].rule 用条目号）
-const RULE_TEXT = { 1: t('任务行写法'), 3: t('依赖 / 并行写法'), 5: t('预计耗时写法'), 7: t('PR 标题写法') };
-const SESSION_SOURCE_TEXT = { 'claude-code': 'Claude Code', codex: 'Codex' };
+export const RULE_TEXT = { 1: t('任务行写法'), 3: t('依赖 / 并行写法'), 5: t('预计耗时写法'), 7: t('PR 标题写法') };
+export const SESSION_SOURCE_TEXT = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
 /**
  * 诊断（需求 18.2、14.9、3.5；UI 稿 renderCheck 的 v-diag）：一张卡片、一个键值区，依次是
@@ -1822,7 +1822,7 @@ function diagWorkspace(w) {
 }
 
 // 一份文档有没有要看的问题：解析不完整 / 失败，或有任何未识别写法与解析诊断（规划中不算问题）
-const docHasIssues = (p) => !['ok', 'planning'].includes(p.state)
+export const docHasIssues = (p) => !['ok', 'planning'].includes(p.state)
   || p.unrecognizedLines.length + p.unknownRelations.length + p.unknownEstimates.length + p.diagnostics.length > 0;
 
 function diagDocs(docs, sources, fold) {

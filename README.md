@@ -67,6 +67,37 @@ mkdir -p ~/.agents/skills && ln -s "$PWD/skills/devboard-add-project" ~/.agents/
 
 The AI changes `devboard.config.json` only through `devboard-ctl save` / `remove`, which back up the file to `devboard.config.json.bak` first. Repositories you add are only ever read.
 
+## Watch it inside Claude Code (mod)
+
+This repository is also a Claude Code plugin. It opens a YUIBoard pane next to the conversation, in both the terminal and the desktop app. The pane shows the project the session belongs to: the overall numbers, a card with the task this session is working on, the task tree, Needs attention and Diagnostics. It reads from your running YUIBoard service and changes nothing. Tested with Claude Code 2.1.293–2.1.296.
+
+Install it in a Claude Code session (Claude Code 2.1.275 or later):
+
+```
+/plugin install yuiboard --marketplace funnysubaru/yuiboard
+```
+
+The plugin and your YUIBoard service must be the same version. When you update the service (`git pull`, then restart it), update the plugin too: `claude plugin update yuiboard@yuiboard`.
+
+To try changes from a checkout instead, load the plugin straight from it (the repository root is the plugin): `claude --plugin-dir /path/to/yuiboard` for one terminal session, or add `"CLAUDE_CODE_PLUGIN_DIRS": "/path/to/yuiboard"` to `env` in `~/.claude/settings.json` and start a new session. Loaded this way, the plugin's id is `yuiboard@inline` instead of `yuiboard@yuiboard`.
+
+Options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `url` | `http://127.0.0.1:4317` | Address of the YUIBoard service. It must run the same version as the plugin. |
+| `lang` | `auto` | Pane language: `auto` (follows Claude Code), `zh`, `ja`, `en` |
+
+```sh
+echo '{"url":"http://127.0.0.1:4317"}' | claude plugin configure yuiboard@yuiboard --values-stdin
+```
+
+- The pane opens by itself once per session, as soon as the session can be matched to a project: the session is linked to one of its tasks, or its working directory is inside a watched workspace. After you close it, it stays closed. Type `/yuiboard` to open it again.
+- The card shows the tasks the session is linked to. Name the task the way you would in a PR title, such as "`<doc>` task 3.2"; a bare number isn't enough. When several tasks are active, the one with the latest activity comes first. Subagents count separately, so each dispatched task stays "running" while its own subagent works.
+- In the terminal, use the keyboard: press Ctrl+X then Tab to enter the pane, Tab or the arrow keys to move, Enter to press, and Esc to go back to the prompt. In fullscreen mode with at least 110 columns, the pane docks on the right and takes mouse clicks. Task numbers and "Open in browser" open the web page. Terminals without OSC 8 links print the address after the label.
+- Option changes reach running sessions. Changes to the plugin's files don't; start a new session.
+- The plugin also brings the skill `skills/devboard-add-project`. An installed plugin runs from a copy, so this copy of the skill asks where your YUIBoard checkout is before it writes anything. If you also symlinked the skill as described above, Claude Code lists it twice; either one works. The `~/.agents/skills` link for Codex is not affected.
+
 ## Run as a service (macOS / Linux)
 
 Run `devboard-ctl` to install the service or restart it. You don't need to edit any plist or unit file by hand.
