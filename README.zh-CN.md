@@ -58,14 +58,19 @@ node src/server.mjs --config /path/to/devboard.config.json
 
 不必手改配置，可以直接对 AI agent 说「把这个项目加到 devboard」。随附的 skill `skills/devboard-add-project` 会识别 spec 的 `tasks.md`、ADR、plan、TODO 文档，与你确认后经 `ops/devboard-ctl.mjs` 写入配置，并重启服务。说「从 devboard 移除这个项目」可以移除。
 
+首次接入后，如果看板发现有写法读不对（诊断页的「不满足约定之处」），AI 会接着用第二个 skill `skills/devboard-fix-convention` 逐条修正：每一处文档行或 PR 标题的改动都先给你看，你确认了才改；任何一条都可以跳过，也可以随时停下。以后也可以单独让它做：「修正不满足约定之处」。
+
 安装 skill：在 YUIBoard 目录执行下面的命令。必须是软链，skill 靠它找回这个目录。
 
 ```sh
-mkdir -p ~/.claude/skills && ln -s "$PWD/skills/devboard-add-project" ~/.claude/skills/devboard-add-project
-mkdir -p ~/.agents/skills && ln -s "$PWD/skills/devboard-add-project" ~/.agents/skills/devboard-add-project
+mkdir -p ~/.claude/skills ~/.agents/skills
+for s in devboard-add-project devboard-fix-convention; do
+  ln -s "$PWD/skills/$s" ~/.claude/skills/$s
+  ln -s "$PWD/skills/$s" ~/.agents/skills/$s
+done
 ```
 
-AI 只经 `devboard-ctl save` / `remove` 改 `devboard.config.json`（改前自动备份为 `devboard.config.json.bak`），对接入的仓库只读。
+AI 只经 `devboard-ctl save` / `remove` 改 `devboard.config.json`（改前自动备份为 `devboard.config.json.bak`）；对接入的仓库只读，你逐条确认的约定修正除外。
 
 ## 在 Claude Code 里看（mod）
 
@@ -100,6 +105,7 @@ claude plugin install yuiboard --marketplace funnysubaru/yuiboard
 |---|---|---|
 | `url` | `http://127.0.0.1:4317` | YUIBoard 服务地址。服务要和插件是同一版本 |
 | `lang` | `auto` | 面板语言：`auto`（跟随 Claude Code）、`zh`、`ja`、`en` |
+| `guard` | `on` | 约定守卫（见下）：`on` 或 `off` |
 
 ```sh
 echo '{"url":"http://127.0.0.1:4317"}' | claude plugin configure yuiboard@yuiboard --values-stdin
@@ -108,8 +114,9 @@ echo '{"url":"http://127.0.0.1:4317"}' | claude plugin configure yuiboard@yuiboa
 - 会话一能对应到项目，面板就自动打开一次：会话关联到了该项目的任务，或工作目录在所看的工作区里。关掉后本会话不再自动打开，输入 `/yuiboard` 可重新打开。
 - 卡片显示本会话关联到的任务。像写 PR 标题那样点名任务，例如「`<文档>` 的任务 3.2」，只写数字不算。同时有多个任务在做时，最近有活动的排第一。子 agent 各算各的，派出去的任务在各自的子 agent 干活期间都算「运行中」。
 - 终端里用键盘操作：按 Ctrl+X 再按 Tab 进入面板，Tab 或方向键移动，Enter 按下，Esc 回到输入框。全屏模式且终端至少 110 列时，面板停靠在右侧，可以用鼠标点。任务编号和「在浏览器打开」会打开网页；终端不支持 OSC 8 链接时，网址会跟在文字后面显示。
+- **约定守卫**：会话对应到项目后，插件在 Claude 的系统提示末尾加一段[文档约定](CONVENTION.zh-CN.md)的要点，让任务、依赖、PR 标题一开始就写成 YUIBoard 读得懂的样子。Claude 写该项目的任务文档（Write、Edit）或执行带字面 `--title` 的 `gh pr create` / `gh pr edit` 时，插件用看板自己的解析器检查结果：这次写入新带进去的不合约定之处直接拦下，告诉 Claude 哪一行、什么问题、建议怎么写，改好再写。文档里原有的问题不拦；插件读不出的标题（变量、`--fill`）放行，服务连不上时也一律放行。插件本身仍然不写任何东西。`guard` 设为 `off` 会同时关掉要点与拦截。Codex 没有这种钩子，改为把 [CONVENTION.zh-CN.md](CONVENTION.zh-CN.md) 文末那段贴进仓库的 `AGENTS.md`。
 - 改配置项对正在运行的会话生效；改插件文件不生效，要新开会话。
-- 插件还带着 skill `skills/devboard-add-project`。安装的插件是从一份副本运行的，所以这份 skill 在写任何东西之前，会先问你 YUIBoard 检出目录在哪里。如果你也按上一节做了软链，Claude Code 会列出两份，用哪一份都行。给 Codex 用的 `~/.agents/skills` 软链不受影响。
+- 插件还带着 skill `skills/devboard-add-project` 与 `skills/devboard-fix-convention`。安装的插件是从一份副本运行的，所以这份 skill 在写任何东西之前，会先问你 YUIBoard 检出目录在哪里。如果你也按上一节做了软链，Claude Code 会各列出两份，用哪一份都行。给 Codex 用的 `~/.agents/skills` 软链不受影响。
 
 ## 常驻服务（macOS / Linux）
 
@@ -214,6 +221,7 @@ node ops/devboard-ctl.mjs revert <revision>                # 撤销返回该 rev
 - **仓库**：只跑白名单里的只读 git 命令（`rev-parse`、`merge-base --is-ancestor`、`for-each-ref`、`log`、`worktree list`），带 `GIT_OPTIONAL_LOCKS=0`，并忽略继承的 `GIT_DIR` 等 `GIT_*` 环境变量。不 fetch、不 checkout、不写 `.git` 与索引，不和你或 AI 的 git 操作抢锁，不改仓库里的任何文件。
 - **GitHub**：只经 `gh` 读取。令牌由 `gh` 自己管理，不落进配置、缓存、日志或页面；令牌权限超出只读所需时页面会提示。
 - **AI 会话记录**：只读打开、只读到最后一个完整行，不在会话目录里新建文件。缓存与页面只留元数据和截断摘要，疑似密钥、令牌已遮蔽；不存完整对话，不上传到任何地方。
+- **约定修正**是唯一的例外，而且不是 YUIBoard 改的：你运行 `devboard-fix-convention`（或首次接入项目）时，由你会话里的 AI 改文档行与 PR 标题，每一处都先经你确认。
 - **本服务**：只写本目录的 `cache/` 与 `data/`。页面只接受同源请求，写接口（手动关联、立即刷新）校验 `Origin` 与 `Content-Type`。无遥测。
 - `test/readonly.test.mjs` 对临时仓库和临时会话目录跑完整刷新，校验前后 `git status`、`.git` 与会话文件（含 mtime）不变。
 

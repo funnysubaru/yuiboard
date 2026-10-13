@@ -11,7 +11,7 @@ Talk to the user in the language they write in. This skill is in English, but ev
 
 ## Rules
 
-- The **current repository is read-only**: no file writes, no commits, no git write operations.
+- The **current repository is read-only** for this skill: no file writes, no commits, no git write operations. The one exception is the convention fix after a first onboarding (step 7), which follows the `devboard-fix-convention` skill: each change to a document or PR title only after the user confirms that single change.
 - Change only `<DEVBOARD>/devboard.config.json`, and only through `devboard-ctl` `save` / `remove` (it holds a lock, backs up to `.bak`, validates, and restores on failure). Do not write your own script to edit the config. Start/stop the service only through `devboard-ctl up`.
 - `<DEVBOARD>` and `<REPO>` below are the **absolute paths** from step 1. Your working directory is usually the watched repository; some platforms run each command in a fresh shell without keeping variables, so spell out absolute paths in every command.
 - Do not write the config before the user explicitly agrees.
@@ -219,16 +219,10 @@ console.log(JSON.stringify({ docs: b.docs.length, tasks: b.tasks.length, plannin
 
 The board itself checks the existing documents and PR titles against `<DEVBOARD>/CONVENTION.md`; `convention` / `conventionSamples` above are its "Convention issues" list (each item says where and, for the forms below, how to rewrite it). `prTitlesChecked: false` means GitHub data has not arrived yet: say PR titles will be checked once it does, and the user can ask you to look again later.
 
-Explain the items to the user and suggest rewrites; **never edit the repository's documents or PR titles yourself** (the repository is read-only for this skill). Common forms and the rewrite to suggest:
+- **New onboarding** with `convention > 0` (owner 2026-10-12, NEXT N27.4): do not stop at suggestions. Right after the step 8 report, tell the user you will now go through the convention issues so the board can read the documents and PR titles, then follow the `devboard-fix-convention` skill (it sits next to this one: `<DEVBOARD>/skills/devboard-fix-convention/SKILL.md`): one item at a time, each change confirmed by the user, "skip" leaves the item on the Diagnostics page, "stop" ends the walk.
+- **Update** of an already onboarded project: only report the count and samples, and offer the same fix walk; start it only if the user asks.
 
-| Found | Suggest |
-|---|---|
-| `### 任务 1：…` / `### Task 1: …` heading in a document that also has `- [ ] N …` task lines (not counted as a task) | `- [ ] 1 …` |
-| `- [ ] task 2 …` (lowercase), `- [ ] ２ …` (full-width digits), `- [ ] 1、…` | `- [ ] 2 …` |
-| Checkbox other than `[ ]` / `[x]` / `[~]` (e.g. `[-]`) | `[ ]`, `[x]` or `[~]` |
-| PR title key whose document name is misspelled or has the wrong case (`Plan-A#1`), or a milestone code that does not exist (`M0-z`) | the exact document name / code, as given in the item |
-| PR title `ADR-0033#64` when several ADR-0033 documents are candidates (reported as ambiguous) | the full document name, e.g. `ADR-0033-engine-upgrade#64` |
-| PR title with no task reference while the description lists task numbers (the description is then taken as delivered) | put the delivered tasks in the title |
+Do not edit anything for these items outside that walk.
 
 Already recognized, no rewrite needed: partial markers `（部分）` `(partial)` `(part)` `（一部）` `（部分完成）` or a trailing `部分` after `任务 N` / a task key / a milestone code; `ADR-0033#64` when only one ADR-0033 is a candidate; `## 阶段一` / `## 第二阶段`; `依赖 1.1 + 1.2`, `依赖 1~3`.
 
@@ -239,8 +233,8 @@ Onboarded into devboard: <name>
 - Board: http://devboard.localhost:<port>/#/overview?project=<id>
 - <docs> documents, <tasks> tasks; <planning> in planning (not yet broken into tasks)
 - Needs attention: <each of problems; "none" if empty>
-- Writing that does not match the convention: <convention, "none" if 0; otherwise the conventionSamples with suggested rewrites, and "full list: Diagnostics page → Convention issues"; if prTitlesChecked is false, add "PR titles not checked yet">
-- Markdown not rendered: <when markdown is non-empty: the count, then the first 10 entries; suggest the rewrite each entry names and point to rule 8 of CONVENTION.md. Do not edit the files yourself (the repository is read-only); the user decides. Omit this line when empty>
+- Writing that does not match the convention: <convention, "none" if 0; otherwise the conventionSamples, "full list: Diagnostics page → Convention issues", and for a new onboarding "fixing them now, one at a time" (see Convention check); if prTitlesChecked is false, add "PR titles not checked yet">
+- Markdown not rendered: <when markdown is non-empty: the count, then the first 10 entries, and point to rule 8 of CONVENTION.md; they are convention issues too and go through the same fix walk. Omit this line when empty>
 - GitHub: <connected owner/name | not connected, working from documents and AI sessions only>
 - Port: <port> (<when portChanged is true: "the original port was taken by <occupant.command>, now using <port>">)
 - Service: <managedBy launchd:… or systemd:… → "resident service, starts at login (<label>)"; background:… → "background process; after a reboot, ask me to start it again">

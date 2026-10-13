@@ -128,6 +128,82 @@ export const rowCost = (row) => row.texts.reduce((n, s) => n + (s?.length ?? 0) 
  */
 export const commandText = () => t('已打开 YUIBoard 面板');
 
+/** 各语言的完整约定文件（插件根目录下，AI 可直接读） */
+const CONVENTION_FILE = { zh: 'CONVENTION.zh-CN.md', ja: 'CONVENTION.ja.md', en: 'CONVENTION.md' };
+
+/**
+ * 注入系统提示的约定摘要（N27 需求 1）：精简到约 1,500 字，内容固定，同一会话内不变（不反复打破提示缓存）。
+ * 与 CONVENTION 三语末尾那段可贴进 AGENTS.md 的片段同内容（test/convention.test.mjs 比对）。调用方先 setLang()。
+ * @param {{ name: string, docSources?: { type: string, path: string|null, files?: string[] }[] }} project /api/projects 的一项
+ * @param {string} root 插件根目录（$.plugin.root）
+ * @returns {string}
+ */
+export function conventionBrief(project, root) {
+  const docs = (project.docSources ?? []).flatMap((s) => (s.type === 'task-list' ? s.files ?? []
+    : s.type === 'spec-dir' ? [`${s.path}/*/tasks.md`] : s.type === 'adr-dir' || s.type === 'md-dir' ? [`${s.path}/*.md`] : []));
+  return [
+    t`本项目「${project.name}」已接入 YUIBoard（本机进度看板），它按约定读取任务文档与 PR 标题；不合约定的写入会被 YUIBoard 的钩子拦下。任务文档：${docs.join(', ')}。`,
+    ...conventionRules(),
+    t`完整约定：${conventionFile(root)}`,
+  ].join('\n');
+}
+
+/**
+ * CONVENTION 三语末尾那段可贴进被看仓库 AGENTS.md / CLAUDE.md 的片段（N27 需求 5.2）：Codex 等没有插件拦截的工具靠它。
+ * 与 conventionBrief 同一组要点；test/convention.test.mjs 逐语言比对文档里的代码块与这里的输出。调用方先 setLang()。
+ */
+export const conventionSnippet = () => [
+  t('本仓库的任务文档与 PR 标题由 YUIBoard（本机进度看板）按约定读取，写的时候照下面写：'),
+  ...conventionRules(),
+  t`完整约定：${`https://github.com/funnysubaru/yuiboard/blob/main/${CONVENTION_FILE[getLang()] ?? CONVENTION_FILE.en}`}`,
+].join('\n');
+
+/** 当前界面语言的完整约定文件路径 */
+const conventionFile = (root) => `${root.replace(/\/+$/, '')}/${CONVENTION_FILE[getLang()] ?? CONVENTION_FILE.en}`;
+
+/** 拦截说明最多列几条；其余写「另有 N 处」 */
+const GUARD_SHOWN = 10;
+
+/**
+ * 写任务文档被拦时给 AI 的说明（N27 需求 2.4）：哪一行、什么问题、建议怎么写。调用方先 setLang()。
+ * @param {string} file
+ * @param {{ line: number, text: string, detail: string }[]} issues guard.mjs docIssues 的结果（detail 是服务端口径的中文原文）
+ * @param {string} root 插件根目录
+ */
+export function guardDocText(file, issues, root) {
+  return [
+    t`YUIBoard：这次写入会给 ${file} 带进 ${issues.length} 处不合约定的写法，已拦下。按下面的说明改好后再写：`,
+    ...issues.slice(0, GUARD_SHOWN).map((x) => t`- 第 ${x.line} 行「${x.text}」：${tx(x.detail)}`),
+    ...(issues.length > GUARD_SHOWN ? [t`另有 ${issues.length - GUARD_SHOWN} 处，改完上面的再看`] : []),
+    // 原样没动的行也冒出问题：是新写的内容改变了它们的读法，该改的是新写的部分
+    ...(issues.some((x) => x.untouched) ? [t('其中有的行这次没改，是新写的内容改变了它们的读法（例如在没有任务行的小节或标题式任务文档里加了「- [ ]」任务行）：请调整新写的部分（放进任务所在的小节、沿用文档原有的写法），不要去改原有的行；拿不准就先问用户。')] : []),
+    t`只拦这次新写进去的问题，文档里原有的不拦。约定见 ${conventionFile(root)}`,
+  ].join('\n');
+}
+
+/**
+ * PR 标题被拦时给 AI 的说明（N27 需求 2.4）。
+ * @param {string} title
+ * @param {string[]} issues guard.mjs titleIssues 的结果
+ * @param {string} root 插件根目录
+ */
+export function guardTitleText(title, issues, root) {
+  return [
+    t`YUIBoard：PR 标题「${title}」里有认不了的任务引用，命令已拦下。改好标题后再执行：`,
+    ...issues.slice(0, GUARD_SHOWN).map((d) => `- ${tx(d)}`),
+    t`这个 PR 不对应任何任务时，去掉标题里像任务引用的写法即可。约定见 ${conventionFile(root)}`,
+  ].join('\n');
+}
+
+/** 约定要点，一行一条（conventionBrief 与 CONVENTION 片段共用） */
+export const conventionRules = () => [
+  t('- 任务行：`- [ ] 编号 标题`；完成写 `[x]`，进行中可写 `[~]`，不用其它复选框；作废写成 `- [x] ~~6 旧方案~~ **【作废 2026-09-01】** 原因`；子任务编号写 `1.1`（父子看编号，不看缩进）。不要用 `### 任务 1：` 这类标题代替任务行。'),
+  t('- 分组：`### 里程碑 M1：说明`，代号在文档内唯一。'),
+  t('- 依赖：写在任务标题末尾的括号里，如 `（依赖 1、2.1）`、`（依赖 2.1–2.4）`、`（依赖 M1）`、`（依赖 other-spec#3）`。'),
+  t('- PR 标题：交付了哪些任务就写进标题，写 `任务 3`、`任务 3.1–3.4` 或里程碑代号；多份文档编号重复时写 `<文档名>#<编号>`；裸数字不算引用。只做了一部分写 `任务 13（部分）`。ADR 简称 `ADR-0033#64` 只在只有一篇 ADR-0033 时可用，否则写完整文档名。'),
+  t('- 任务正文的 Markdown 只用列表、复选框、代码块、引用、表格、加粗、斜体、删除线、行内代码、链接；不要用标题、分隔线、图片、脚注、HTML 标签。'),
+];
+
 /**
  * 整个面板的内容（design §4、§6）：纯数据进、纯数据出，文字都已翻译、已截断，总量已按 TEXT_BUDGET 裁剪。
  * 调用方先 setLang()。分支线固定「全部」。

@@ -6,7 +6,7 @@ YUIBoard reads planning documents in your repository (`tasks.md`, ADRs), GitHub 
 
 - Each rule shows the **recommended form** first, then the **existing forms that are also accepted** (old documents don't need rewriting).
 - Not following a rule never makes anything fail: tasks still show up, whatever can be recognized is still used, and the "Convention issues" section of the Diagnostics page says which rule, which document and line, or which PR.
-- YUIBoard never changes files in your repository. To have your AI follow these rules too, paste this file into the project's `CLAUDE.md`.
+- The YUIBoard service never changes files in your repository. To have your AI follow these rules too, see "A short brief for AI" at the end.
 - Every example in the code blocks below is fed to the parser by `test/convention.test.mjs`, so the tests check any change to the examples.
 - For documents in Chinese or Japanese, use the equivalent keywords listed under "**中文 / 日本語**" in each rule; they are recognized just like the English forms (English keywords are case-insensitive), and languages can be mixed.
 
@@ -313,3 +313,19 @@ YUIBoard displays task titles, group headings and task bodies with a subset of M
 - **Rendered**: nested lists (`-`, `*`, `+`, `1.`) with `[ ]` / `[x]` / `[~]` checkboxes; fenced code blocks (`` ``` `` or `~~~`); block quotes (consecutive `>` lines, which may contain lists); GFM tables (header row, `|---|` separator with `:` for alignment, `\|` for a literal pipe); inline `` `code` ``, `**bold**`, `~~strikethrough~~`, `_italic_`, and `[text](https://…)` links (other links show only their text).
 - **Kept as written, not flagged**: a single `*` or `~` (`*.mjs`, `cron */5`, `1.2~1.8` are wildcards and ranges, not italic or strikethrough), underscores inside words (`snake_case`, `__tests__`), and placeholders such as `<id>` or `<docRef>`. Nothing inside code is interpreted.
 - **Shown as written and marked "not rendered as Markdown here"**: headings inside a task body (such as an indented `#### Notes`), horizontal rules, images `![…](…)`, footnotes `[^1]`, and HTML tags such as `<br>`, `<details>` or `<img>`. The Diagnostics page lists each one under rule 8 with its document and line. Suggested rewrites: a bold line instead of a heading, a blank line instead of a rule, a link `[text](url)` instead of an image, the note in the text or in parentheses instead of a footnote, and Markdown or inline code instead of HTML.
+
+## A short brief for AI
+
+With Claude Code and the YUIBoard plugin installed, the plugin gives the AI the points below once the session recognizes the project; when the AI writes a task document or runs `gh pr create` / `gh pr edit`, the plugin checks it against this convention and blocks anything off-convention that this write adds, so the AI fixes it first (existing issues in a document are not blocked; set the plugin option `guard` to `off` to turn this off).
+
+Codex and other tools are not blocked: paste the block below into the watched repository's `AGENTS.md` / `CLAUDE.md`. For writing that is already off-convention, the AI can walk the Diagnostics page with the `devboard-fix-convention` skill and fix the items one by one, each change confirmed by you.
+
+```md
+Task documents and PR titles in this repository are read by YUIBoard (a local progress board) by its convention; write them as follows:
+- Task lines: `- [ ] <number> <title>`; `[x]` when done, optionally `[~]` while in progress, no other checkboxes; void a task as `- [x] ~~6 Old approach~~ **[void 2026-09-01]** reason`; subtasks are numbered `1.1` (parent and child follow the number, not the indentation). Do not use headings such as `### Task 1:` instead of task lines.
+- Groups: `### Milestone M1: <description>`, the code unique within the document.
+- Dependencies: in parentheses at the end of the task title, e.g. `(depends on 1, 2.1)`, `(depends on 2.1–2.4)`, `(depends on M1)`, `(depends on other-spec#3)`.
+- PR titles: put the delivered tasks in the title as `Task 3`, `Tasks 3.1–3.4` or a milestone code; when numbers repeat across documents write `<document>#<number>`; bare numbers are not references. For partial delivery write `Task 13 (partial)`. The ADR short form `ADR-0033#64` works only when there is a single ADR-0033; otherwise write the full document name.
+- Markdown in task bodies: only lists, checkboxes, code blocks, quotes, tables, bold, italic, strikethrough, inline code and links; no headings, horizontal rules, images, footnotes or HTML tags.
+Full convention: https://github.com/funnysubaru/yuiboard/blob/main/CONVENTION.md
+```

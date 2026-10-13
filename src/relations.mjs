@@ -2,7 +2,7 @@
 // 纯函数：输入已切好的行与 parseTasksDoc 的任务 / 分组，输出关系、前置条件与未识别说法。
 // 引用在这里只解析到「本文档里被点名的任务」，不展开后代、不继承父任务依赖、不判环——那些归 engine（design §3.8.1）。
 
-import { compareTaskNumbers } from './docs.mjs';
+import { compareTaskNumbers } from './parse.mjs';
 
 const NUM = 'T?\\d+[a-z]?(?:\\.\\d+[a-z]?)*';
 const DEFAULT_PREREQ_ID = '^~*P\\d+~*$';

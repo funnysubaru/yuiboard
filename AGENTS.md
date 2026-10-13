@@ -10,6 +10,7 @@ YUIBoard is a local, read-only progress board for AI-assisted development. It re
 - `test/fixtures/ui-mockup.html`: the static UI mockup the interface was built from (fictional data). `test/ui.test.mjs` checks colors, status icons, navigation and wording against it.
 
 - The Claude Code plugin (mod): the repository root is the plugin (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/`). `hooks/model.mjs` is the pure pane logic, tested by `npm test`; `hooks/register.tsx` holds the hooks and the pane, tested by `claude plugin test .` (not in CI). On the server side it adds only `src/summary.mjs`.
+- The convention guard: checks live in `src/guard.mjs`, the pure parsers in `src/parse.mjs`. Plugin hooks may import only modules that never import `node:*` (`test/guard.test.mjs` walks the import graph). The fix-up skill is `skills/devboard-fix-convention`.
 
 The trilingual docs move together: if you change one README or CONVENTION, update the other two in the same PR.
 
@@ -26,7 +27,8 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
   - git runs only the allow-listed read-only commands in `GIT_ALLOWED` (`src/docs.mjs`), with `GIT_OPTIONAL_LOCKS=0` and without inherited `GIT_*` variables (`gitEnv()` in `src/config.mjs`; otherwise `GIT_DIR` and friends override `-C`).
   - GitHub is read only through `gh api graphql`, and YUIBoard holds no token.
   - Only `src/store.mjs` writes to disk, and only to `cache/` and `data/`.
-  - The Claude Code mod reads the local service only through `GET /api/projects/:id/summary` (the mod's `$.http.fetch` caps responses at 4 MiB, which the full board exceeds) and writes nothing.
+  - The Claude Code mod reads the local service only through `GET /api/projects` and `GET /api/projects/:id/summary` (the mod's `$.http.fetch` caps responses at 4 MiB, which the full board exceeds). The convention guard also reads, with `$.fs.read`, the task document it is about to check. The mod writes nothing.
+  - `skills/devboard-fix-convention` is an approved exception that is not YUIBoard writing: the AI in the user's session edits document lines and PR titles from the Diagnostics list, each change only after the user confirms it, never in batches, and never commits.
   - The exception is `ops/devboard-ctl.mjs`, which also writes:
     - `devboard.config.json`: `up` rewrites `server.port`, and `save` / `remove` back the file up to `.bak` first;
     - `cache/devboard.pid` and `cache/devboard.log`;
@@ -74,6 +76,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
   - `md-dir` sources: docs without task lines show as "Planning", and they give way to other sources with the same name.
   - `repo.github` is optional. Without it no PR cache is read and no old board is replayed.
 - **Claude Code mod.** The repository root is the plugin, because a mod can't import files outside its plugin directory or follow symlinks; that's why `skills/devboard-add-project` comes with the plugin. The pane opens by itself once per session when it can match the session to a project, and stays closed after the user closes it. Status hues match the web page. Task numbers are the links to the web page; nothing appears only on hover. The main task is the one with the latest activity; on a tie, prefer tasks the session named, then unchecked ones, then tasks without subtasks, then document order.
+- **Convention guard.** Once a session is matched to a project, the plugin appends the convention summary to the system prompt. When the AI writes a task document (Write / Edit, in the workspace or one of its git worktrees) or runs `gh pr create` / `gh pr edit` with a literal `--title`, anything off-convention that this write adds is **blocked**; problems the document already had are not. On any error, an unreadable title or an unreachable service, it lets the call through. The plugin option `guard` (default `on`) turns both the summary and the blocking on or off. After a first onboarding with convention issues, `devboard-add-project` goes straight into the one-at-a-time fix walk (any item can be skipped); re-onboarding only reports the count. Codex is not blocked; it relies on the skill and the snippet at the end of CONVENTION.
 - In the overview task tree, doc, group and task text can be selected and copied but not edited. Clicking text or empty row space doesn't open the drawer; the "Details" button at the end of the row does. Docs, groups and parent tasks expand only via their fold triangle.
 
 ## Redraw behavior (when changing `main()` in `web/app.mjs`)

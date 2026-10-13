@@ -1,7 +1,8 @@
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import { setLang } from '../web/i18n.mjs'
-import { commandText, focusOf, focusPath, langOf, paneOf, pickProject } from './model.mjs'
+import { applyEdit, docIssues, isTaskDoc, parseDoc, prTitles, titleIssues } from '../src/guard.mjs'
+import { commandText, conventionBrief, focusOf, focusPath, guardDocText, guardTitleText, langOf, paneOf, pickProject } from './model.mjs'
 import type { View } from './state.d.ts'
 
 // 钩子模块（design §5）：会话开始 / 结束、/yuiboard、轮询、面板绘制。只做摆放，不含文案。
@@ -213,6 +214,105 @@ async function bump($: Engine) {
   await $.state.set(REV, ((await $.state.get(REV)).value ?? 0) + 1)
 }
 
+/**
+ * N27：认出了项目、拿到了摘要、且最近一轮轮询没有出错时，给拦截用的项目配置投影与摘要；否则 null（放行）。
+ * 轮询出错（服务连不上、4xx / 5xx、摘要超限）时面板照旧显示上次的内容，拦截却要停：缓存可能已过时，
+ * 「服务连不上就放行」（需求 2.6，公开 PR #8 review）。下一轮成功后自动恢复。
+ */
+function guarded() {
+  if (S.projectId === null || S.problems.length > 0) return null
+  const project = S.projects?.projects.find(p => p.id === S.projectId)
+  const summary = S.summaries[S.projectId]?.summary
+  return project !== undefined && summary ? { project: project as any, summary } : null
+}
+
+/**
+ * N27 写任务文档的拦截（需求 2.1、2.2）：不是本项目的任务文档就放行；是的话读原文（只读），算出写后全文，
+ * 本次新引入的约定问题非空就拦。apply 返回 null（Edit 对不上原文）时放行，交给工具自己报错。
+ */
+async function docGuard($: Engine, file: string, apply: (before: string) => string | null) {
+  const g = guarded()
+  if (!g) return null
+  // 文件所在的检出：工作区本身，或它的 git worktree（owner 多在 worktree 里开发，看板读的是工作区，两边同样按约定写）
+  const root = await checkoutRoot($, file.slice(0, file.lastIndexOf('/')), g.summary.workspaces ?? [])
+  const doc = root !== null ? isTaskDoc(file, g.project, [{ path: root }]) : null
+  if (!doc) return null
+  const before = (await $.fs.exists(file)) ? await $.fs.read(file) : ''
+  const after = apply(before)
+  if (after === null) return null
+  const issues = docIssues(before, after, { ...doc, milestoneCodePattern: g.project.milestoneCodePattern, prerequisiteIdPattern: g.project.prerequisiteIdPattern })
+  return issues.length ? { deny: guardDocText(file, issues, $.plugin.root) } : null
+}
+
+/**
+ * N27 PR 标题的拦截（需求 2.3）：命令里读得出的 gh pr create / edit 标题，按本项目的文档认引用。
+ * 看板读的是工作区，PR 却常在 worktree / 分支上新加 spec 与任务再引用它们：按摘要查出问题时，再用当前检出里的
+ * 任务文档（同 docId 的取当前检出的版本）重查一遍，还有问题才拦。
+ */
+async function titleGuard($: Engine, command: string) {
+  const g = guarded()
+  if (!g) return null
+  for (const { title, base } of prTitles(command)) {
+    const check = (docs: object[]) => titleIssues(title, docs, g.project.branchLines ?? [], base)
+    let issues = check(g.summary.docs ?? [])
+    if (!issues.length) continue
+    const root = await checkoutRoot($, await $.session.cwd(), g.summary.workspaces ?? [])
+    if (root !== null) {
+      const local = await checkoutDocs($, root, g.project)
+      const ids = new Set(local.map(d => d.docId))
+      issues = check([...(g.summary.docs ?? []).filter((d: { docId: string }) => !ids.has(d.docId)), ...local])
+    }
+    if (issues.length) return { deny: guardTitleText(title, issues, $.plugin.root) }
+  }
+  return null
+}
+
+/**
+ * from（目录）所在检出的根：本身是某个工作区，或是工作区的 git worktree（`.git` 是文件，写着
+ * `gitdir: <工作区>/.git/worktrees/…`）；都不是返回 null。只读：$.fs.exists / read。
+ * ponytail: 不解析符号链接，工作区路径与文件路径写法不同（/var 与 /private/var）时认不出，认不出只是不检查。
+ */
+async function checkoutRoot($: Engine, from: string, workspaces: { path: string; ref?: string }[]) {
+  const roots = workspaces.filter(w => !w.ref).map(w => w.path.replace(/\/+$/, ''))
+  let dir = from.replace(/\/+$/, '')
+  for (let i = 0; i < 64 && dir.startsWith('/'); i++) {
+    if (roots.includes(dir)) return dir
+    if (await $.fs.exists(`${dir}/.git`)) {
+      // 主仓库的 .git 是目录，read 会拒绝：那是别的仓库，不是本项目的 worktree
+      const git = await $.fs.read(`${dir}/.git`).catch(() => '')
+      const m = /^gitdir:\s*(.+?)\s*$/m.exec(typeof git === 'string' ? git : '')
+      return m && roots.some(r => m[1]!.startsWith(`${r}/.git/worktrees/`)) ? dir : null
+    }
+    if (dir === '' || dir === '/') break
+    dir = dir.slice(0, dir.lastIndexOf('/')) || '/'
+  }
+  return null
+}
+
+/** 某个检出里按 docSources 能发现的任务文档，解析成摘要里文档的形状（只读） */
+async function checkoutDocs($: Engine, root: string, project: any) {
+  const files: string[] = []
+  for (const s of project.docSources ?? []) {
+    if (s.type === 'task-list') {
+      files.push(...(s.files ?? []).map((f: string) => `${root}/${f}`))
+      continue
+    }
+    const dir = `${root}/${s.path}`
+    for (const en of await $.fs.list(dir).catch(() => [])) {
+      if (s.type === 'spec-dir' && en.kind === 'dir') files.push(`${dir}/${en.name}/tasks.md`)
+      else if (s.type !== 'spec-dir' && en.kind === 'file' && en.name.endsWith('.md')) files.push(`${dir}/${en.name}`)
+    }
+  }
+  const docs: { docId: string }[] = []
+  for (const f of files) {
+    const doc = isTaskDoc(f, project, [{ path: root }])
+    if (!doc || !(await $.fs.exists(f))) continue
+    const text = await $.fs.read(f)
+    if (typeof text === 'string') docs.push(parseDoc(text, { ...doc, milestoneCodePattern: project.milestoneCodePattern, prerequisiteIdPattern: project.prerequisiteIdPattern }) as { docId: string })
+  }
+  return docs
+}
+
 /** 界面语言（owner 已定 2）：配置项 lang；auto 时依次看 Claude 设置的 language、系统区域 */
 async function pickLang($: Engine, configured: unknown) {
   if (configured === 'zh' || configured === 'ja' || configured === 'en') return configured
@@ -254,6 +354,29 @@ export const register: Register = (on, options) => {
     gen++
     return next(e)
   })
+
+  // N27 写之前（需求 1）：认出被看的项目后，在系统提示末尾加约定摘要。内容只随项目变，同一会话内不反复打破提示缓存
+  on('prompt.compose', async ($, e, next) => {
+    const r = await next(e)
+    const project = options.guard === 'off' || S.projectId === null ? undefined : S.projects?.projects.find(p => p.id === S.projectId)
+    if (project === undefined) return r
+    // 组要点出错就照原样返回：不能因为 YUIBoard 让系统提示组不出来（需求 2.6 同理）
+    try {
+      return { sections: [...r.sections, { id: 'yuiboard:convention', text: conventionBrief(project, $.plugin.root), scope: 'session' as const }] }
+    } catch {
+      return r
+    }
+  })
+
+  // N27 写的时候拦截（需求 2）：见 docGuard / titleGuard。检查本身出错一律放行（需求 2.6），不因 YUIBoard 卡住用户
+  const off = options.guard === 'off'
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => (off ? null : await docGuard($, e.file_path, () => e.content)) ?? next(e))
+    .catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => (off ? null
+    : await docGuard($, e.file_path, before => applyEdit(before, e.old_string, e.new_string, e.replace_all === true))) ?? next(e))
+    .catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => (off ? null : await titleGuard($, e.command)) ?? next(e))
+    .catch(($, e, next) => next(e))
 
   on('command.run', { command: 'yuiboard' }, async $ => {
     await $.ui.open({ id: PANE, title: 'YUIBoard' })

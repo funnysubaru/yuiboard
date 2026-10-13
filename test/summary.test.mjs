@@ -65,8 +65,8 @@ function fixtureBoard() {
 // design §3.1 的字段表：键 = 保留的字段；值为对象的递归往下比，其余整块原样保留
 const SPEC = {
   top: ['projectId', 'freshness', 'degraded', 'workspaces', 'diagnostics', 'defaults', 'stats', 'docs', 'tasks', 'conflicts', 'prs', 'sessions'],
-  doc: ['docId', 'title', 'path', 'kind', 'archived', 'workspaceId', 'sourceType', 'sourceLabel', 'parse', 'groups', 'tasks'],
-  docTask: ['key', 'number', 'title', 'checkbox', 'void', 'docId', 'groupId', 'parentKey'],
+  doc: ['docId', 'title', 'path', 'kind', 'archived', 'workspaceId', 'sourceType', 'sourceLabel', 'parse', 'groups', 'alias', 'adr', 'tasks'],
+  docTask: ['key', 'number', 'title', 'checkbox', 'void', 'docId', 'groupId', 'parentKey', 'duplicate'],
   view: ['key', 'status', 'rule', 'docOnly', 'syncPending', 'syncUnchecked', 'inProgressBy', 'activity', 'childSummary', 'next', 'prs', 'sessions', 'deps'],
   prLink: ['pr', 'partial', 'removedManually'],
   sessionLink: ['sessionId', 'activity', 'firstAt', 'lastAt'],
