@@ -167,6 +167,16 @@ test('N27：文末「给 AI 的简短说明」代码块与插件注入的要点�
       assert.ok(titles.length >= 3, l.file);
       for (const t of titles) assert.ok(extractRefs(t).nums.length, `${l.file} ${t}`);
       assert.ok(titles.some((t) => extractRefs(t).partial.length), l.file);
+      // 任务行要点里说的状态与解析结果一致（PR review：曾把 [~] 写成作废，实际是进行中）
+      const rule = md[0].text.split('\n')[1];
+      const boxes = [...rule.matchAll(/`(\[[ x~]\])`/g)].map((m) => m[1]);
+      assert.deepEqual(boxes, ['[x]', '[~]'], `${l.file} 列出完成与进行中`);
+      const state = (line) => { const t = parseTasksDoc(`${line}\n`, 'ex').tasks[0]; return t && `${t.checkbox}${t.void ? ' void' : ''}`; };
+      assert.equal(state('- [x] 1 a'), 'done');
+      assert.equal(state('- [~] 1 a'), 'doing');
+      const voidLine = [...rule.matchAll(/`(- \[x\] [^`]+)`/g)].map((m) => m[1]);
+      assert.equal(voidLine.length, 1, `${l.file} 给出一种作废写法`);
+      assert.equal(state(voidLine[0]), 'done void', `${l.file} ${voidLine[0]}`);
       // 依赖写法放进任务行能整句识别
       const deps = [...md[0].text.matchAll(/`([（(][^`]+[)）])`/g)].map((m) => m[1]);
       assert.equal(deps.length, 4, l.file);

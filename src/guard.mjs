@@ -70,7 +70,10 @@ function match(source, r) {
  */
 export function prTitles(command) {
   const out = [];
-  for (const words of commands(String(command))) {
+  const text = stripHeredocs(String(command));
+  // heredoc 没有结束行：正文与命令分不清，宁可放行
+  if (text === null) return out;
+  for (const words of commands(text)) {
     // 命令名是这条命令的第一个词（前面的环境变量赋值 FOO=1 跳过）：`echo gh pr create …` 不算
     const i = words.findIndex((w) => typeof w !== 'string' || !/^[A-Za-z_]\w*=/.test(w));
     if (words[i] !== 'gh' || words[i + 1] !== 'pr' || !['create', 'edit'].includes(words[i + 2])) continue;
@@ -78,22 +81,51 @@ export function prTitles(command) {
     let base = null;
     for (let j = i + 3; j < words.length; j++) {
       const w = words[j];
-      const opt = (long, short) => (typeof w === 'string' && w.startsWith(`${long}=`) ? w.slice(long.length + 1)
-        : w === long || w === short ? words[++j] : undefined);
-      const title = opt('--title', '-t');
-      if (typeof title === 'string') titles.push(title);
-      else {
-        const b = opt('--base', '-B');
-        if (typeof b === 'string') base = b;
-      }
+      if (typeof w !== 'string') continue;
+      // 带值的选项：它的值不再当选项看（--body '--title=任务 99' 里的不是标题，PR review）
+      const eq = w.indexOf('=');
+      const flag = w.startsWith('--') && eq > 0 ? w.slice(0, eq) : w;
+      const inline = flag !== w ? w.slice(eq + 1) : undefined;
+      if (!WITH_VALUE.has(flag)) continue;
+      const value = inline ?? words[++j];
+      if (flag === '--title' || flag === '-t') { if (typeof value === 'string') titles.push(value); }
+      else if (flag === '--base' || flag === '-B') base = typeof value === 'string' ? value : null;
     }
     out.push(...titles.map((title) => ({ title, base })));
   }
   return out;
 }
 
+// gh pr create / edit 里带值的选项（gh 2.x）：分词时跳过它们的值
+const WITH_VALUE = new Set([
+  '--title', '-t', '--body', '-b', '--body-file', '-F', '--base', '-B', '--head', '-H', '--label', '-l', '--assignee', '-a',
+  '--reviewer', '-r', '--milestone', '-m', '--project', '-p', '--repo', '-R', '--template', '-T', '--recover',
+  '--add-label', '--remove-label', '--add-assignee', '--remove-assignee', '--add-reviewer', '--remove-reviewer',
+  '--add-project', '--remove-project', '--remove-milestone',
+]);
+
+// 去掉 heredoc 正文（`<<EOF` / `<<-'EOF'` 到结束行），正文里的文字不是命令；heredoc 常写在 --body "$(cat <<'EOF' …)" 里，
+// 不管在不在引号里一律按行去掉。找不到结束行返回 null（分不清，调用方放行）。`<<<` 是 here-string，不算。
+function stripHeredocs(s) {
+  const HEAD = /(?<!<)<<(?!<)(-?)\s*(['"]?)([A-Za-z_][\w.-]*)\2/g;
+  let out = '';
+  let from = 0;
+  for (let m; (m = HEAD.exec(s));) {
+    if (m.index < from) continue;
+    const eol = s.indexOf('\n', m.index);
+    if (eol < 0) return null;
+    const lines = s.slice(eol + 1).split('\n');
+    const k = lines.findIndex((l) => (m[1] ? l.replace(/^\t+/, '') : l) === m[3]);
+    if (k < 0) return null;
+    out += s.slice(from, eol + 1);
+    from = eol + 1 + lines.slice(0, k + 1).join('\n').length;
+    HEAD.lastIndex = from;
+  }
+  return out + s.slice(from);
+}
+
 // 极简 shell 分词：按控制符切成多条命令，每条是词的数组；读不出字面值的词（含 $、`）记成 null。
-// ponytail: 不处理 heredoc 正文、转义换行、$'…'、子 shell 里的命令；这些情况的标题按读不出放行。
+// ponytail: 不处理 $'…'、子 shell 里的命令；这些情况的标题按读不出放行。
 function commands(s) {
   const cmds = [];
   let words = [];

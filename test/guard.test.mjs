@@ -79,6 +79,16 @@ test('prTitles：取同一条命令里的 --base / -B', () => {
   assert.deepEqual(prTitles(`gh pr edit 3 -t x`), [{ title: 'x', base: null }]);
 });
 
+test('prTitles：别的选项的值不当选项看；heredoc 正文不是命令；heredoc 没结束放行（PR review）', () => {
+  assert.deepEqual(titlesOf(`gh pr create --title 'chore: sync' --body '--title=任务 99'`), ['chore: sync']);
+  assert.deepEqual(titlesOf(`gh pr create -b -t -t x`), ['x'], '-b 的值是 -t');
+  assert.deepEqual(titlesOf(`cat <<'EOF'\ngh pr create -t '任务 99'\nEOF`), []);
+  assert.deepEqual(titlesOf(`gh pr create --title "x" --body "$(cat <<'EOF'\nsay "hi" it's\ngh pr create -t "任务 99"\nEOF\n)"\ngh pr edit 3 -t y`), ['x', 'y']);
+  assert.deepEqual(titlesOf(`cat <<-EOF\n\tgh pr create -t z\n\tEOF\ngh pr create -t w`), ['w'], '<<- 允许结束行前有制表符');
+  assert.deepEqual(titlesOf(`cat <<'EOF'\ngh pr create -t '任务 99'`), [], '没有结束行');
+  assert.deepEqual(titlesOf(`grep x <<< "gh" && gh pr create -t v`), ['v'], 'here-string 不是 heredoc');
+});
+
 test('prTitles：反斜杠换行续行', () => {
   assert.deepEqual(titlesOf('gh pr create \\\n  --title "任务 1" \\\n  --body x'), ['任务 1']);
   assert.deepEqual(titlesOf('gh pr create\\\n --title x'), ['x']);

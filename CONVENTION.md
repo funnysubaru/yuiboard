@@ -322,7 +322,7 @@ Codex and other tools are not blocked: paste the block below into the watched re
 
 ```md
 Task documents and PR titles in this repository are read by YUIBoard (a local progress board) by its convention; write them as follows:
-- Task lines: `- [ ] <number> <title>`; `[x]` when done, `[~]` when void, no other checkboxes; subtasks are numbered `1.1` (parent and child follow the number, not the indentation). Do not use headings such as `### Task 1:` instead of task lines.
+- Task lines: `- [ ] <number> <title>`; `[x]` when done, optionally `[~]` while in progress, no other checkboxes; void a task as `- [x] ~~6 Old approach~~ **[void 2026-09-01]** reason`; subtasks are numbered `1.1` (parent and child follow the number, not the indentation). Do not use headings such as `### Task 1:` instead of task lines.
 - Groups: `### Milestone M1: <description>`, the code unique within the document.
 - Dependencies: in parentheses at the end of the task title, e.g. `(depends on 1, 2.1)`, `(depends on 2.1–2.4)`, `(depends on M1)`, `(depends on other-spec#3)`.
 - PR titles: put the delivered tasks in the title as `Task 3`, `Tasks 3.1–3.4` or a milestone code; when numbers repeat across documents write `<document>#<number>`; bare numbers are not references. For partial delivery write `Task 13 (partial)`. The ADR short form `ADR-0033#64` works only when there is a single ADR-0033; otherwise write the full document name.
