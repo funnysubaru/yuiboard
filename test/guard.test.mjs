@@ -89,6 +89,19 @@ test('prTitles：别的选项的值不当选项看；heredoc 正文不是命令�
   assert.deepEqual(titlesOf(`grep x <<< "gh" && gh pr create -t v`), ['v'], 'here-string 不是 heredoc');
 });
 
+test('prTitles：同一行多个 heredoc、带空格或数字的分隔符都吃掉正文；读不出的分隔符放行（第二轮 review）', () => {
+  assert.deepEqual(titlesOf(`cat <<FIRST <<SECOND\nignored\nFIRST\ngh pr create -t 'Task 99'\nSECOND\ngh pr create -t ok`), ['ok']);
+  assert.deepEqual(titlesOf(`cat <<'DOC TEXT'\ngh pr create -t 'Task 99'\nDOC TEXT\ngh pr create -t ok`), ['ok']);
+  assert.deepEqual(titlesOf(`cat <<123\ngh pr create -t 'Task 99'\n123\ngh pr create -t ok`), ['ok']);
+  assert.deepEqual(titlesOf(`cat <<$X\ngh pr create -t 'Task 99'\n$X`), [], '分隔符带 $：放行');
+  assert.deepEqual(titlesOf(`cat <<EOF'x'\ngh pr create -t 'Task 99'\nEOFx`), [], '分隔符紧跟引号：放行');
+  assert.deepEqual(titlesOf(`cat <<FIRST <<SECOND\nFIRST\ngh pr create -t 'Task 99'`), [], '第二段没结束：放行');
+});
+
+test('prTitles：开关选项不吞下一项（--remove-milestone 不带值）', () => {
+  assert.deepEqual(titlesOf(`gh pr edit 3 --remove-milestone -t '任务 99'`), ['任务 99']);
+});
+
 test('prTitles：反斜杠换行续行', () => {
   assert.deepEqual(titlesOf('gh pr create \\\n  --title "任务 1" \\\n  --body x'), ['任务 1']);
   assert.deepEqual(titlesOf('gh pr create\\\n --title x'), ['x']);

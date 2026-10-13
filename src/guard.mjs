@@ -101,27 +101,34 @@ const WITH_VALUE = new Set([
   '--title', '-t', '--body', '-b', '--body-file', '-F', '--base', '-B', '--head', '-H', '--label', '-l', '--assignee', '-a',
   '--reviewer', '-r', '--milestone', '-m', '--project', '-p', '--repo', '-R', '--template', '-T', '--recover',
   '--add-label', '--remove-label', '--add-assignee', '--remove-assignee', '--add-reviewer', '--remove-reviewer',
-  '--add-project', '--remove-project', '--remove-milestone',
+  '--add-project', '--remove-project',
 ]);
 
-// 去掉 heredoc 正文（`<<EOF` / `<<-'EOF'` 到结束行），正文里的文字不是命令；heredoc 常写在 --body "$(cat <<'EOF' …)" 里，
-// 不管在不在引号里一律按行去掉。找不到结束行返回 null（分不清，调用方放行）。`<<<` 是 here-string，不算。
+// 去掉 heredoc 正文，正文里的文字不是命令。按行处理：一行里的每个 opener（`<<EOF`、`<<-'EOF'`、`<<"DOC TEXT"`、`<<123`，
+// 同一行可以有好几个）按顺序各吃掉自己的正文与结束行；heredoc 常写在 --body "$(cat <<'EOF' …)" 里，不管在不在引号里一律按行去掉。
+// 分隔符读不出（含 $、反斜杠、紧跟引号等）或找不到结束行时返回 null：分不清正文与命令，调用方放行（PR review）。
+// `<<<` 是 here-string，不算。引号里或算术里出现的 `<<` 也会被当成 opener，最坏只是放行，不会误拦。
 function stripHeredocs(s) {
-  const HEAD = /(?<!<)<<(?!<)(-?)\s*(['"]?)([A-Za-z_][\w.-]*)\2/g;
-  let out = '';
-  let from = 0;
-  for (let m; (m = HEAD.exec(s));) {
-    if (m.index < from) continue;
-    const eol = s.indexOf('\n', m.index);
-    if (eol < 0) return null;
-    const lines = s.slice(eol + 1).split('\n');
-    const k = lines.findIndex((l) => (m[1] ? l.replace(/^\t+/, '') : l) === m[3]);
-    if (k < 0) return null;
-    out += s.slice(from, eol + 1);
-    from = eol + 1 + lines.slice(0, k + 1).join('\n').length;
-    HEAD.lastIndex = from;
+  const lines = s.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    out.push(line);
+    const pending = [];
+    for (const m of line.matchAll(/(?<!<)<<(?!<)(-?)[ \t]*(?:'([^']*)'|"([^"]*)"|([^\s;&|<>()'"`$\\]+))?/g)) {
+      const delim = m[2] ?? m[3] ?? m[4];
+      const next = line[m.index + m[0].length];
+      if (!delim || (next !== undefined && !/[\s;&|<>()]/.test(next))) return null;
+      pending.push({ delim, tabs: m[1] === '-' });
+    }
+    for (const h of pending) {
+      let k = i + 1;
+      while (k < lines.length && (h.tabs ? lines[k].replace(/^\t+/, '') : lines[k]) !== h.delim) k++;
+      if (k >= lines.length) return null;
+      i = k;
+    }
   }
-  return out + s.slice(from);
+  return out.join('\n');
 }
 
 // 极简 shell 分词：按控制符切成多条命令，每条是词的数组；读不出字面值的词（含 $、`）记成 null。
