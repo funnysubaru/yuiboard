@@ -214,9 +214,13 @@ async function bump($: Engine) {
   await $.state.set(REV, ((await $.state.get(REV)).value ?? 0) + 1)
 }
 
-/** N27：认出了项目且拿到了摘要时，给拦截用的项目配置投影与摘要；否则 null（放行） */
+/**
+ * N27：认出了项目、拿到了摘要、且最近一轮轮询没有出错时，给拦截用的项目配置投影与摘要；否则 null（放行）。
+ * 轮询出错（服务连不上、4xx / 5xx、摘要超限）时面板照旧显示上次的内容，拦截却要停：缓存可能已过时，
+ * 「服务连不上就放行」（需求 2.6，公开 PR #8 review）。下一轮成功后自动恢复。
+ */
 function guarded() {
-  if (S.projectId === null) return null
+  if (S.projectId === null || S.problems.length > 0) return null
   const project = S.projects?.projects.find(p => p.id === S.projectId)
   const summary = S.summaries[S.projectId]?.summary
   return project !== undefined && summary ? { project: project as any, summary } : null

@@ -23,7 +23,7 @@ Talk to the user in the language they write in. This skill is in English, but ev
 1. `<REPO>` = `git rev-parse --show-toplevel`. Fails → **Stop**: not in a git repository.
    `<MAIN>` = the repository's main checkout, which is what the board usually watches when `<REPO>` is a git worktree (also a sibling one such as `/tmp/project-feature`): `git rev-parse --path-format=absolute --git-common-dir`, minus a trailing `/.git`. Both commands only read.
 2. `<URL>` = the devboard service, `http://127.0.0.1:4317` unless the user or the YUIBoard plugin's `url` setting says otherwise. `curl -sf "<URL>/api/projects"` fails → **Stop**: the service is not running; tell the user to start it (`node <YUIBoard checkout>/ops/devboard-ctl.mjs up`).
-3. Find the project whose workspace contains `<REPO>`; only if no project does, the one whose workspace contains `<MAIN>` (a worktree can be onboarded as a project of its own, and then its own list is the right one):
+3. Find the project whose workspace contains `<REPO>`, preferring the closest workspace (an exact match beats a parent directory); only if no project contains `<REPO>`, do the same for `<MAIN>`. A worktree can be onboarded as a project of its own, also one nested inside the main checkout, and then its own list is the right one:
 
    ```sh
    curl -s "<URL>/api/projects" | node -e '
@@ -36,8 +36,9 @@ Talk to the user in the language they write in. This skill is in English, but ev
        ws.push([p.id, ((await r.json()).workspaces ?? []).filter((w) => !w.ref).map((w) => w.path)]);
      }
      for (const dir of repos) {
-       const hit = ws.find(([, paths]) => paths.some((w) => dir === w || dir.startsWith(w + "/")));
-       if (hit) { console.log(hit[0]); return; }
+       // 最近的工作区优先：完全相同的路径最长，嵌套的 worktree 项目胜过它所在的父目录项目
+       const hits = ws.flatMap(([id, paths]) => paths.filter((w) => dir === w || dir.startsWith(w + "/")).map((w) => [id, w.length]));
+       if (hits.length) { console.log(hits.sort((a, b) => b[1] - a[1])[0][0]); return; }
      }
    })();' "<URL>" "<REPO>" "<MAIN>"
    ```

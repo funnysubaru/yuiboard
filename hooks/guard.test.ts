@@ -24,7 +24,7 @@ const PROJECTS = JSON.stringify({
 const OLD = '# A\n\n- [ ] 1 one\n- [-] 2 旧问题\n'
 function world(on: On, id = 'S1', files: Record<string, string | null> = { '/w/one/.claude/specs/a/tasks.md': OLD }, cwd = '/elsewhere') {
   const clock = mock.clock(on)
-  const w = { clock, ran: [] as string[], reads: [] as string[] }
+  const w = { clock, ran: [] as string[], reads: [] as string[], offline: false }
   // 目录也算存在（files 里有以它开头的路径）；list 给出直接子项
   on('fs.exists', ($, e) => ({ value: Object.hasOwn(files, e.path) || Object.keys(files).some(f => f.startsWith(`${e.path}/`)) }))
   on('fs.list', ($, e) => {
@@ -60,6 +60,7 @@ function world(on: On, id = 'S1', files: Record<string, string | null> = { '/w/o
   on('command.register', () => ({ value: { command: 'yuiboard' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('http.fetch', ($, e) => {
+    if (w.offline) return { deny: 'connect ECONNREFUSED 127.0.0.1:4317' }
     const path = e.url.slice(URL.length)
     const text = path === '/api/projects' ? PROJECTS : path === '/api/projects/p1/summary' ? SUMMARY : null
     return { value: text === null ? { status: 404, ok: false, headers: {}, text: '{}' } : { status: 200, ok: true, headers: {}, text } }
@@ -203,4 +204,19 @@ test('勾选原本就有问题的那一行（编号重复等）不拦：问题�
   await start($, w)
   expect(await call($, { tool: 'Edit', file_path: SPEC, old_string: '- [ ] 1 one again', new_string: '- [x] 1 one again' })).toBeUndefined()
   expect(w.ran).toEqual(['Edit'])
+})
+
+test('认出项目后服务断线：拦截停下、全部放行；服务恢复后照常拦（公开 PR #8 review）', { options: { lang: 'zh' } }, async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  const bad = { tool: 'Write', file_path: SPEC, content: `${OLD}- [-] 9 x\n` }
+  expect(await call($, bad)).toContain('YUIBoard')
+  w.offline = true
+  await w.clock.advance(5000)
+  expect(await call($, bad)).toBeUndefined()
+  expect(await call($, { tool: 'Bash', command: 'gh pr create -t "feat: 任务 99"' })).toBeUndefined()
+  w.offline = false
+  await w.clock.advance(5000)
+  expect(await call($, bad)).toContain('YUIBoard')
+  expect(w.ran).toEqual(['Write', 'Bash'])
 })
