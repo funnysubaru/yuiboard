@@ -681,7 +681,7 @@ export function statusWhy(view, task) {
       return view.syncUnchecked
         ? t('文档已勾选、关联 PR 已合并；拿不到合并提交或本地没有对应 base 分支，本地同步未核对，按已合并完成算')
         : t('文档已勾选、关联 PR 已合并，且本地已包含合并提交');
-    case '8.2-3': return t('文档里已勾选，没找到 PR → 仅文档确认');
+    case '8.2-3': return view.docOnly ? t('文档里已勾选，没找到 PR → 仅文档确认') : t('文档里已勾选 → 完成（本项目未接 GitHub，不看 PR）');
     case '8.2-4': {
       const part = view.inProgressBy.includes('partial') && [...new Set(view.prs.filter((l) => l.partial).map((l) => `#${l.pr}`))];
       const merged = view.inProgressBy.includes('merged');

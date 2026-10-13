@@ -128,6 +128,7 @@ Run these against a real repository before a release or after a large change. Th
     - The "Waiting on me" column says the project has no GitHub, so it contains no PRs.
     - The Diagnostics GitHub section says it is not configured.
     - "↻ Refresh" refreshes only docs and sessions, and tasks are only ever not started, in progress or done.
+    - A checked task is done without the "Checked in doc only" flag, and "Needs attention" does not list it.
 15. **Claude Code mod** (see README "Watch it inside Claude Code"), once in a terminal and once in the desktop app, with the plugin's `url` pointing at a service running this checkout:
     - In a new session in a watched repository, name a task ("`<doc>` task N"). The pane opens by itself, and within about 10 s the card shows the task, the tree expands to it and the row is bold (with an orange outline in the desktop app).
     - Name another task: the card and the highlight follow. After `/clear`, the pane says the session has no linked task until you name one again.

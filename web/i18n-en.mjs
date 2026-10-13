@@ -173,6 +173,7 @@ const ui = {
   '文档已勾选、关联 PR 已合并；拿不到合并提交或本地没有对应 base 分支，本地同步未核对，按已合并完成算': 'Checked in the doc and the linked PR is merged; local sync couldn’t be verified (no merge commit or no local base branch), so it counts as done',
   '文档已勾选、关联 PR 已合并，且本地已包含合并提交': 'Checked in the doc, the linked PR is merged, and the merge commit is present locally',
   '文档里已勾选，没找到 PR → 仅文档确认': 'Checked in the doc, no PR found → checked in doc only',
+  '文档里已勾选 → 完成（本项目未接 GitHub，不看 PR）': 'Checked in the doc → done (this project has no GitHub, so PRs are not checked)',
   '本项目里有 AI 会话正在做这个任务': 'An AI session in this project is working on this task',
   '文档里标了进行中（[~]）': 'Marked in progress in the doc ([~])',
   'PR {0} 标了「部分」、已合并；文档尚未勾选确认完整交付，仍算进行中': 'PR {0} is marked “partial” and merged; the doc isn’t checked to confirm full delivery, so it’s still in progress',

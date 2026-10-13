@@ -165,7 +165,7 @@ function fixtureSummary() {
     { ...raw[0], number: 902, title: 'fix: 任务 99 与 collab-m0-space-run 任务 2', state: 'OPEN', mergedAt: null, mergeCommit: null },
   ].map(normalizePr);
   const board = computeBoard(docs, prs, sessions, [], { 360: { state: 'synced' }, 365: { state: 'pending' } },
-    { id: 'widget', repo: { path: '/ws/repo' }, branchLines: LINES }, NOW, { hoursPerDay: 8, defaultDurationDays: 1 });
+    { id: 'widget', repo: { path: '/ws/repo', github: 'acme/widget' }, branchLines: LINES }, NOW, { hoursPerDay: 8, defaultDurationDays: 1 });
   board.workspaces = [{ id: 'repo', path: '/ws/repo', branch: 'main', commit: 'a'.repeat(40), detached: false, error: null }];
   return summarize(board);
 }

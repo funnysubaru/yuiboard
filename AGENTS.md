@@ -58,6 +58,7 @@ The trilingual docs move together: if you change one README or CONVENTION, updat
   - An unchecked task with a merged linked PR is in progress.
   - If sync can't be verified, a checked task still counts as done, flagged "local sync not verified".
   - A checked task with no valid PR is done, flagged "checked in doc only".
+  - A project without `repo.github` has no PRs to look for: its checked tasks are done without the "checked in doc only" flag and stay out of "Needs attention".
 - **"In progress" activity comes from the focus of local AI sessions.** A merged PR alone doesn't mean a session is active.
 - **Task rows come from `tasks.md`**; PRs are only tags at the end of the row.
   - PRs are linked to tasks mainly by their title. Bare numbers are never recognized.

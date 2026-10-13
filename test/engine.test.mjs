@@ -38,6 +38,15 @@ test('文档信号可达的三态：已勾 → 仅文档确认；[~] → 进行�
   assert.ok(Object.values(t).every((v) => v.statusSince === null && v.prs.length === 0));
 });
 
+test('N28 未接 GitHub：已勾选照旧完成，但不标仅文档确认、不报冲突 c；接了 GitHub 照旧标', () => {
+  const run = (repo) => byNum(computeBoard([planDoc('synthetic-inline')], [], [], [], {}, { id: 'demo', repo }, NOW));
+  const off = run({ path: '/ws/repo' });
+  assert.deepEqual([off['1.1'].status, off['1.1'].rule, off['1.1'].docOnly], ['done', '8.2-3', false]);
+  assert.ok(Object.values(off).every((v) => !v.conflicts.includes('c')));
+  const on = run({ path: '/ws/repo', github: 'acme/demo' });
+  assert.deepEqual([on['1.1'].docOnly, on['1.1'].conflicts.includes('c')], [true, true]);
+});
+
 test('作废任务不给状态、不计入分母', () => {
   const b = board([planDoc('synthetic-inline')]);
   const t = byNum(b);

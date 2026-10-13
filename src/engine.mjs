@@ -41,13 +41,18 @@ export function computeBoard(docs, prs, sessions, manual, sync, config, now, def
   const sess = linkSessions(docs, sessions, prs, linked.prs, config);
   const sessOf = new Map();
   for (const l of sess.links) (sessOf.get(l.taskKey) ?? sessOf.set(l.taskKey, []).get(l.taskKey)).push(l);
+  // N28（owner 2026-10-13）：未接 GitHub 的项目本来就没有 PR，已勾选照旧算完成，但不标「仅文档确认」、不报冲突 c。
+  // 校验过的配置都有 repo；只传 id 的测试配置不算未接 GitHub。
+  const noGithub = config.repo != null && !config.repo.github;
   const views = tasks.map((t) => {
     const links = (linksOf.get(t.key) ?? []).sort((a, b) => a.pr - b.pr);
     const sl = sessOf.get(t.key) ?? [];
     // 部分标记保留为进展依据；全部关联 PR 都检查本地同步，完成还必须由文档勾选确认。
     const partialMerged = links.filter((l) => l.partial && prByNum.get(l.pr)?.state === 'MERGED').map((l) => l.pr);
     const counted = links.map((l) => prByNum.get(l.pr));
-    return Object.assign(taskView(t, deriveStatus(t, counted, sync, sl, partialMerged), links, prByNum), { sessions: sl });
+    const st = deriveStatus(t, counted, sync, sl, partialMerged);
+    if (noGithub) st.docOnly = false;
+    return Object.assign(taskView(t, st, links, prByNum), { sessions: sl });
   });
   markActivity(views, new Date(now).getTime(), defaults);
 
@@ -397,7 +402,7 @@ function detectConflicts(tasks, views) {
     const v = views[i];
     if (t.duplicate) add(v, 'e', msg`编号 ${t.number} 在文档里出现了不止一次`);
     if (t.void) return;
-    if (v.rule === '8.2-3') add(v, 'c', msg('复选框已勾选，但没有关联 PR（仅文档确认）'));
+    if (v.docOnly) add(v, 'c', msg('复选框已勾选，但没有关联 PR（仅文档确认）'));
     if (v.deps.dangling.length) {
       const { file, line, text } = v.deps.dangling[0];
       add(v, 'f', msg`依赖了找不到的对象：${joinList([...new Set(v.deps.dangling.map((x) => x.raw))])}`, { file, line, text });
