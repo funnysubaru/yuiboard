@@ -258,7 +258,7 @@ test('固定输入结果可重复', () => {
 // import 放在本段开头（ES 模块里会被提升），与并行开发的其它任务改文件头时互不冲突。
 import { realpathSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { loadProjectDocs, readWorkspaceHead, gitRead } from '../src/docs.mjs';
@@ -743,6 +743,51 @@ test('N17 docRef 缺文件：fetch 前后原因会更新（文件戳带上 ref �
   git(repo, 'update-ref', 'refs/remotes/origin/next/x', 'next/x'); // 相当于 fetch 之后有了这个 ref
   const second = await loadProjectDocs(proj, { prev: first.parsedCache });
   assert.match(docMap(second)['next:ADR-0099-none'].parse.reason, /origin\/next\/x 上没有这个文件/);
+});
+
+test('N30 读取失败不粘住：文件戳没变也重读，读成功即恢复；仍是同一错误不算重解析', async () => {
+  const repo = await refRepo();
+  await put(repo, { 'plans/roadmap.md': TASKS });
+  const proj = { ...refProject(repo), docSources: [...refProject(repo).docSources, { type: 'task-list', label: '清单', files: ['plans/roadmap.md', 'plans/missing.md'] }] };
+  const first = await loadProjectDocs(proj);
+  // 模拟上一轮（或上次启动存进 docs.json 的）一时失败：git 子进程被超时杀掉，文件戳照旧
+  const failed = { kind: 'adr', title: null, parse: { state: 'error', reason: '读取或解析失败：Command failed: git cat-file blob …' }, groups: [], tasks: [] };
+  const prev = { ...first.parsedCache, 'next:ADR-0042-x': { ...first.parsedCache['next:ADR-0042-x'], parsed: failed }, 'plans/roadmap': { ...first.parsedCache['plans/roadmap'], parsed: failed } };
+  const second = await loadProjectDocs(proj, { prev });
+  const d = docMap(second);
+  assert.deepEqual(d['next:ADR-0042-x'].tasks.map((t) => t.number), ['1', '2', '94'], 'docRef 文档重读恢复');
+  assert.deepEqual(d['plans/roadmap'].tasks.map((t) => t.number), ['1', '2'], '本地文件同样重读恢复');
+  assert.deepEqual(second.reparsed.sort(), ['next:ADR-0042-x', 'plans/roadmap']);
+  // 一直读不了的文件（不存在）每轮重试，但结果没变就沿用，不触发重算
+  const third = await loadProjectDocs(proj, { prev: second.parsedCache });
+  assert.equal(docMap(third)['plans/missing'].parse.state, 'error');
+  assert.deepEqual(third.reparsed, []);
+});
+
+test('N30 gitRead：进程冻结超过 10 秒（像机器睡眠）醒来时超时先到点，不论 git 被杀还是已写完，重试一次读出原文', { skip: process.platform === 'win32' && '靠 SIGSTOP 冻结进程' }, async () => {
+  const repo = await refRepo();
+  const blob = git(repo, 'rev-parse', `next/x:${ADR42}`);
+  // 子进程自成进程组，发起读取后立刻冻结，11 秒后由这里 SIGCONT 整组。两种冻结法：
+  // group = 连同刚派生的 git 一起冻结（git 醒来还没写完 → 被杀掉报错）；
+  // self = 只冻结 node，git 照常写完退出（execFile 到点先销毁 stdout → 「成功」返回空输出，CI 的 Linux 上踩到过）
+  const frozenRead = (target) => {
+    const code = `const { gitRead } = await import(${JSON.stringify(new URL('../src/docs.mjs', import.meta.url).href)});
+const p = gitRead(${JSON.stringify(repo)}, ['cat-file', 'blob', ${JSON.stringify(blob)}], { raw: true });
+process.kill(${target === 'group' ? '-process.pid' : 'process.pid'}, 'SIGSTOP');
+p.then((s) => console.log(JSON.stringify({ text: s })), (e) => console.log(JSON.stringify({ killed: e.killed, signal: e.signal })));`;
+    const child = spawn(process.execPath, ['--input-type=module', '-e', code], { detached: true, stdio: ['ignore', 'pipe', 'inherit'] });
+    let out = '';
+    child.stdout.on('data', (b) => { out += b; });
+    const resume = setTimeout(() => process.kill(-child.pid, 'SIGCONT'), 11_000);
+    return new Promise((resolve) => child.on('exit', resolve)).then(() => JSON.parse(out)).finally(() => {
+      clearTimeout(resume);
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { /* 已退出 */ }
+    });
+  };
+  const text = '\n# ADR-0042 新版\n\n- [ ] 1 甲\n- [x] 2 乙\n- [ ] 94 丙\n';
+  const [group, self] = await Promise.all([frozenRead('group'), frozenRead('self')]);
+  assert.deepEqual(group, { text }, 'git 一起冻结');
+  assert.deepEqual(self, { text }, '只冻结 node');
 });
 
 // ---- N9：写法不合约定时不静默误读 ----

@@ -17,7 +17,7 @@ export { parseTasksDoc, parseEstimate, compareTaskNumbers } from './parse.mjs';
 
 /**
  * 只读 git 封装：不经 shell；关闭可选锁（不刷索引、不抢 index.lock，需求 16.1）与交互提示；
- * 中文路径不转义；10 秒超时。只放行白名单里的子命令，后续任务要用新命令时把前缀加进 GIT_ALLOWED。
+ * 中文路径不转义；10 秒超时，到了超时的那一次不论成败都重试一次。只放行白名单里的子命令，后续任务要用新命令时把前缀加进 GIT_ALLOWED。
  * @param {string} ws 工作区绝对路径
  * @param {string[]} args 例如 ['rev-parse', 'HEAD']
  * @param {{ raw?: boolean }} [opts] raw = 读文件内容：不去首尾空白（首部空行影响行号），输出上限放到 64 MiB
@@ -27,16 +27,27 @@ export async function gitRead(ws, args, { raw = false } = {}) {
   if (!GIT_ALLOWED.some((prefix) => prefix.every((a, k) => args[k] === a))) {
     throw new Error(`只读 git 白名单外的命令：git ${args.join(' ')}`);
   }
-  const { stdout } = await runGit('git', ['-C', ws, '-c', 'core.quotepath=false', ...args], {
-    timeout: 10_000,
+  const run = () => runGit('git', ['-C', ws, '-c', 'core.quotepath=false', ...args], {
+    timeout: GIT_TIMEOUT,
     env: gitEnv(),
     ...(raw ? { maxBuffer: 64 * 1024 * 1024 } : {}),
   });
+  const started = performance.now();
+  // 被超时杀掉（killed 且没有退出码；超出 maxBuffer 时 code 是字符串）算没读到，其它失败照常抛出
+  const first = await run().catch((e) => {
+    if (e.killed && e.code == null) return null;
+    throw e;
+  });
+  // 到了超时的那一次不可信，重试一次（N30）：机器睡眠 / DarkWake 期间进程冻结，醒来时 10 秒超时先于读管道执行。
+  // git 还在写 → 被杀掉报错；git 已正常退出 → execFile 先销毁 stdout 再杀，「成功」返回截断（常为空）的输出，
+  // 所以按耗时判断、不看成败。再超时就照常抛出。
+  const { stdout } = first && performance.now() - started < GIT_TIMEOUT ? first : await run();
   return raw ? stdout : stdout.trim();
 }
 // 按参数前缀匹配。design §3.2 的完整白名单还有 worktree list --porcelain、log --diff-filter=A、merge-base --is-ancestor，由用到的任务加入。
 const GIT_ALLOWED = [['rev-parse'], ['merge-base', '--is-ancestor'], ['log', '--diff-filter=A'], ['worktree', 'list', '--porcelain'], ['for-each-ref'], ['cat-file', 'blob']];
 const runGit = promisify(execFile);
+const GIT_TIMEOUT = 10_000;
 
 /**
  * 工作区当前检出的分支与提交。分离 HEAD（含变基中）、有未提交改动都照常返回；git 失败时分支与提交为 null，
@@ -172,7 +183,7 @@ export async function loadProjectDocs(project, opts = {}) {
         // 增量（任务 3.5）：文件戳没变就沿用上一轮的解析结果，只重解析变化的文档（需求 13.3、17.3）
         const stamp = await docStamp(d);
         const old = opts.prev?.[d.docId];
-        const parsed = old && old.stamp === stamp ? old.parsed : await readDoc(d, parseOpts);
+        const parsed = await cachedRead(old, stamp, () => readDoc(d, parseOpts));
         if (parsed !== old?.parsed && d.kind !== 'planning') reparsed.push(d.docId);
         parsedCache[d.docId] = { stamp, parsed };
         docs.push({ ...base, ...parsed });
@@ -193,18 +204,25 @@ export async function loadProjectDocs(project, opts = {}) {
       // 没有 blob 时戳带上 ref 的提交 / 错误：fetch 之后原因变了（ref 有了但仍无此文件）要重新给出
       const stamp = `ref|${file}|${blob ?? `missing|${ws.commit ?? ws.error}`}`;
       const old = opts.prev?.[d.docId];
-      let parsed = old && old.stamp === stamp ? old.parsed : null;
-      if (!parsed) {
-        const why = ws.error ? msg`读不到 ${line.docRef}：${ws.error}` : msg`${line.docRef} 上没有这个文件`;
-        parsed = blob ? await readDoc(d, parseOpts, () => gitRead(project.repo.path, ['cat-file', 'blob', blob], { raw: true }))
-          : { kind: d.kind, title: null, parse: emptyParse('error', why), groups: [], tasks: [] };
-        reparsed.push(d.docId);
-      }
+      const why = ws.error ? msg`读不到 ${line.docRef}：${ws.error}` : msg`${line.docRef} 上没有这个文件`;
+      const parsed = await cachedRead(old, stamp, async () => (blob ? readDoc(d, parseOpts, () => gitRead(project.repo.path, ['cat-file', 'blob', blob], { raw: true }))
+        : { kind: d.kind, title: null, parse: emptyParse('error', why), groups: [], tasks: [] }));
+      if (parsed !== old?.parsed) reparsed.push(d.docId);
       parsedCache[d.docId] = { stamp, parsed };
       docs.push({ ...base, ...parsed });
     }
   }
   return { workspaces, docs, diagnostics, reparsed, parsedCache };
+}
+
+// 文件戳没变就沿用上一轮结果；但 error 的不沿用、每轮重读：读失败可能只是一时的（N30：机器睡眠 / DarkWake 期间进程冻结超过 10 秒，醒来时
+// git cat-file 子进程被 gitRead 的超时杀掉），否则这份错误会连同 docs.json 一直留到文件变动。
+// 重读仍是同一错误（文件不存在等）就沿用旧对象，调用方据此不算重解析，不会每轮触发重算。
+async function cachedRead(old, stamp, read) {
+  if (old?.stamp === stamp && old.parsed.parse.state !== 'error') return old.parsed;
+  const parsed = await read();
+  const same = old?.stamp === stamp && parsed.parse.state === 'error' && parsed.parse.reason === old.parsed.parse.reason;
+  return same ? old.parsed : parsed;
 }
 
 // docRef 分支线里的一个文件：放在某个 adr-dir 来源目录下按 ADR 解析，否则按任务清单；alias = 不带前缀的 docId，
