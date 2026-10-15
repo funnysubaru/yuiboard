@@ -716,6 +716,43 @@ test('子 agent 各算各的：子 agent 的分支信号只管它自己这一路
   assert.deepEqual([m['4'].sessions[0].lastAt, m['1'].sessions[0].lastAt], [at(5), at(5)], '主线的分支任务照常随主线活动');
 });
 
+test('N29 切到能对上 PR 任务的分支：分支任务接管焦点，消息设的旧焦点停在切分支前；对不上 PR 的分支不改焦点', () => {
+  const docs = [withPath(inline(SIMPLE))];
+  const prs = [pr(11, { title: '任务 4', headRefName: 'feat-4' })];
+  const run = (signals) => byNum(sBoard(docs, [session('s7', signals)], { prs }));
+  const t = run([
+    say(docs, '做任务 1', at(60), at(40)),
+    sig('branch', at(39), at(20), { branch: 'scratch' }), // 没有 PR 的分支：任务 1 照旧
+    sig('branch', at(19), at(5), { branch: 'feat-4' }), // PR #11 的分支：接管
+    sig('touch', at(4), at(0), { docPath: 't/tasks.md' }),
+  ]);
+  assert.deepEqual([t['1'].sessions[0].lastAt, t['1'].sessions[0].activity], [at(20), 'recent'], '任务 1 停在切到 PR 分支前');
+  assert.deepEqual([t['4'].sessions[0].lastAt, t['4'].sessions[0].activity], [at(0), 'running']);
+  // 切分支之后再点名别的任务：照常设焦点，与分支任务并行
+  const u = run([
+    say(docs, '做任务 1', at(60), at(40)),
+    sig('branch', at(39), at(20), { branch: 'feat-4' }),
+    say(docs, '再看任务 2', at(19), at(0)),
+  ]);
+  assert.deepEqual([u['1'].sessions[0].lastAt, u['2'].sessions[0].lastAt, u['4'].sessions[0].lastAt], [at(40), at(0), at(0)]);
+});
+
+test('N29 只管主线：子 agent 那一路切到 PR 分支不清它的焦点，派给它的任务照旧续活动；主线焦点也不变', () => {
+  const docs = [withPath(inline(SIMPLE))];
+  const prs = [pr(11, { title: '任务 4', headRefName: 'feat-4' })];
+  const t = byNum(sBoard(docs, [session('s8', [
+    say(docs, '做任务 1', at(60), at(55)),
+    { ...say(docs, '实现任务 2', at(54), at(54), 'dispatch'), toolUseId: 'tb' },
+    sig('agent', at(53), at(30), { lane: 'tb' }),
+    sig('branch', at(29), at(10), { branch: 'feat-4', lane: 'tb' }), // 回放实测：子 agent 开工时检出切到一条 PR 不对应派活的分支
+    sig('touch', at(9), at(0), { docPath: 't/tasks.md', lane: 'tb' }),
+    say(docs, '看一下 t 的文档', at(8), at(1)), // 主线继续（只写 docId，不改焦点）
+  ])], { prs }));
+  assert.equal(t['2'].sessions[0].lastAt, at(0), '子 agent 的任务 2 不因切分支停掉');
+  assert.equal(t['4'].sessions[0].lastAt, at(0));
+  assert.equal(t['1'].sessions[0].lastAt, at(1), '主线焦点任务 1 不受子 agent 切分支影响');
+});
+
 test('⑥ pr-link → 该 PR 的任务；分支 = PR head → 该 PR 的任务且切分支前一直计活动；PR 状态优先于会话', () => {
   const docs = [withPath(inline(SIMPLE))];
   const prs = [pr(10, { title: '任务 1' }), pr(11, { title: '任务 4', state: 'CLOSED', headRefName: 'task-4' })];

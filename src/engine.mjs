@@ -666,6 +666,7 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
     };
     const name = s.title ? msg`会话「${s.title}」` : msg`会话 ${s.id}`;
     let focus = [];
+    let focusBy = null; // 设主线焦点的那条信号（N29：同一条记录里的分支信号不清它）
     // 子 agent 各算各的（owner 2026-10-12）：认得出的子 agent（有 agent 信号）一路一个 lane = 派它的 toolUseId。
     // 派给它的任务不改主线焦点，只由它自己的记录续活动；派活没点到任务（或没采信）时，冻结派活那一刻的主线焦点给它
     // （空焦点也冻结），主线之后换任务不影响它。分支关联也按路分开：子 agent 在别的分支上干活不改主线的分支任务。
@@ -696,6 +697,7 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
           for (const k of res.tasks) hit(k, g, g.at, note);
         } else {
           focus = res.tasks;
+          focusBy = g;
           for (const k of focus) hit(k, g, g.until, note);
         }
       } else if (g.kind === 'edit') {
@@ -710,6 +712,12 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
           for (const k of prInfo.get(p.number)?.tasks ?? []) { hit(k, g, g.until, msg`会话分支 ${g.branch} = PR #${p.number} 的 head`); list.push(k); }
         }
         branchTasks.set(g.lane ?? null, list);
+        // N29（owner 2026-10-13）：主线切到能对上 PR 任务的分支 = 转去做这个 PR 了，此前由消息设定的焦点不再续活动
+        // （实测：会话开头点名的 N9 / N12 在做 N28 时仍一直「运行中」）。对不上 PR 的分支不改焦点。
+        // 只管主线（owner 2026-10-15 改）：子 agent 开工时检出常刚好切到一条 PR 不对应派活的分支，回放里会把派给它的任务提前停掉。
+        // 只清此前记录设的焦点：扫描器在同一条用户记录里先出 prompt、再出 gitBranch，那条消息刚点名的任务要保留（PR #51 review）。
+        const sameRecord = focusBy && focusBy.file === g.file && focusBy.line === g.line;
+        if (list.length && !g.lane && !sameRecord) focus = [];
       }
       if (g.kind === 'dispatch' && lanes.has(g.toolUseId) && !laneTasks.has(g.toolUseId)) laneTasks.set(g.toolUseId, focus);
       const own = g.lane ? laneTasks.get(g.lane) ?? focus : focus;

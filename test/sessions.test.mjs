@@ -8,6 +8,8 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { scan, resolveScanScope, defaultRecordsDir, claudeCode } from '../src/sessions/claude-code.mjs';
+import { linkSessions } from '../src/engine.mjs';
+import { parseTasksDoc } from '../src/parse.mjs';
 
 const tmpDir = async () => realpathSync(await mkdtemp(path.join(os.tmpdir(), 'devboard-sessions-')));
 const enc = (p) => p.replace(/[^A-Za-z0-9]/g, '-');
@@ -403,6 +405,21 @@ test('子 agent 各算各的：没写任务的派活也留下（带 toolUseId、
     ['branch', 'child-wt', 'toolu_d', null, false],
   ]);
   assert.deepEqual(s.branches, ['feat', 'child-wt']);
+});
+
+test('N29 扫描到引擎：同一条用户记录先点名任务、又带上 PR 分支时，点名的任务不被分支清掉；之后的记录才接管（PR #51 review）', async () => {
+  const doc = { docId: 'devboard-mvp', path: '.claude/specs/devboard-mvp/tasks.md', archived: false,
+    ...parseTasksDoc('- [ ] 2 甲\n- [ ] 3 乙\n- [ ] 4 丙\n', 'devboard-mvp') };
+  const prs = [{ number: 9, headRefName: 'feat-c' }, { number: 10, headRefName: 'feat-d' }];
+  const prInfo = new Map([[9, { tasks: ['devboard-mvp#3'] }], [10, { tasks: ['devboard-mvp#4'] }]]);
+  const { s } = await scanOne((repo) => [
+    human(repo, T('01:00'), '做 devboard-mvp 的任务 2', { gitBranch: 'feat-c' }), // 同一条记录：prompt 在前、分支在后
+    ai(repo, T('01:20'), [text('（虚构）继续')], { gitBranch: 'feat-c' }),
+    ai(repo, T('01:30'), [text('（虚构）切走')], { gitBranch: 'feat-d' }), // 另一条记录切到 PR #10 的分支：这时才接管
+    ai(repo, T('01:40'), [text('（虚构）继续')], { gitBranch: 'feat-d' }),
+  ]);
+  const last = Object.fromEntries(linkSessions([doc], [s], prs, prInfo, {}).links.map((l) => [l.taskKey.split('#')[1], l.lastAt]));
+  assert.deepEqual(last, { 2: T('01:20'), 3: T('01:20'), 4: T('01:40') });
 });
 
 test('touch：Edit / Write 路径与 Bash 命令里的规划文档目录；整词匹配、每份文档只记第一次', async () => {
