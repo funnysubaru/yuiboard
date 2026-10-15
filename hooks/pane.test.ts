@@ -258,7 +258,7 @@ for (const surface of SURFACES) {
     expect((await box('task:a#1')).alignItems).toBe('stretch')
     expect((await bar('task:a#1.2'))?.backgroundColor).toBe('claude')
     expect((await box('task:a#1.2')).backgroundColor).toBe((await box('task:a#1')).backgroundColor)
-    expect((await texts('task:a#1.2')).find(n => (n.children ?? []).join('') === '\u25CB')?.props.color).toBe('inactive')
+    expect((await texts('task:a#1.2')).find(n => (n.children ?? []).join('') === '\u25CB 未开始')?.props.color).toBe('inactive')
     // 桌面铺带透明度的底色；终端按主题深浅取（读不出就不铺）
     if (surface === 'desktop') expect((await box('task:a#1')).backgroundColor).toBe('#d9775724')
     else expect([undefined, '#3a2a22', '#fcefe9']).toContain((await box('task:a#1')).backgroundColor)
@@ -414,6 +414,26 @@ for (const surface of SURFACES) {
     await ui.redraw()
     expect(await text(ui, 'title')).toContain('Two')
     expect(await keys(ui)).not.toContain('pick:p1')
+    await ui.unmount()
+  })
+}
+
+// N31 PR review：状态文字一列同宽，英文最长的「◑ Awaiting review」也放得下，编号与标题起点不因状态错开
+const cols = (s: string) => [...s].reduce((n, c) => n + ((c.codePointAt(0) ?? 0) >= 0x1100 ? 2 : 1), 0)
+for (const surface of SURFACES) {
+  test(`[${surface}] 状态文字一列同宽：英文界面最长的状态也不超出`, { options: { lang: 'en' } }, async ($, on) => {
+    const s = summary({ 'a#1': RUN('S1') })
+    s.tasks.find(v => v.key === 'a#1.2')!.status = 'in_review'
+    const w = world(on, { p1: s })
+    await start($, w)
+    const ui = await mount($, w, surface)
+    const marks = await Promise.all(['focus:a#1', 'task:a#1', 'task:a#1.2'].map(async (key) => {
+      const box = walk(await ui.find({ type: 'Box', key })).find(n => n.type === 'Box' && n.props?.minWidth !== undefined)!
+      return { width: box.props!.minWidth as number, text: walk(box).filter(n => n.type === 'Text').flatMap(n => n.children ?? []).join('') }
+    }))
+    expect(marks.map(m => m.text)).toContain('◑ Awaiting review')
+    expect(new Set(marks.map(m => m.width)).size).toBe(1)
+    for (const m of marks) expect(m.width).toBeGreaterThanOrEqual(cols(m.text))
     await ui.unmount()
   })
 }

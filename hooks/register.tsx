@@ -434,9 +434,10 @@ export const register: Register = (on, options) => {
     }
     // 缩进每级两格，最多占宽度的三分之一，深链不把行挤没
     const indent = (level: number) => Math.min(level * 2, Math.floor(e.props.bodyColumns / 3))
-    // 任务类行是 [图标, 编号, 标题]：编号占同宽一列，标题对齐；诊断项名同理
+    // 任务类行是 [图标与状态文字, 编号, 标题]：状态文字与编号各占同宽一列，标题对齐；诊断项名同理
     const numbered = (row: Row) => row.texts.length === 3 && NUMBERED.has(row.kind)
     const numWidth = Math.min(8, Math.max(0, ...[...pane.focus, ...rows].filter(numbered).map(r => r.texts[1]!.length)))
+    const markWidth = Math.max(0, ...[...pane.focus, ...rows].filter(numbered).map(r => cols(r.texts[0]!))) // 状态文字是固定的几个词，不设上限
     const labelWidth = Math.min(20, Math.max(0, ...rows.filter(r => r.kind === 'diag' && r.level === 0).map(r => cols(r.texts[0]!)))) + 1
     // 块与块之间空一行；块内各行之间一条更窄的细缝。终端最小单位是一行，细缝只在桌面等远端界面画
     const spacing = (row: Row) => (row.gap === true ? 1 : row.sep === true && e.surface !== 'terminal' ? SEP : 0)
@@ -501,7 +502,10 @@ export const register: Register = (on, options) => {
         ? <Button key={row.toggle} label={row.open ? '▾' : '▸'} plain dimColor={!row.open} onPress={flip(row.toggle)} />
         : null
       const parts = head.map((s, i) => {
-        if (i === 0 && row.status !== undefined) return <Text color={fg ?? COLOR[row.status]}>{s}</Text>
+        if (i === 0 && row.status !== undefined) {
+          const text = <Text color={fg ?? COLOR[row.status]}>{s}</Text>
+          return numbered(row) ? <Box minWidth={markWidth} flexShrink={0}>{text}</Box> : text
+        }
         // 编号就是跳到网页的入口（owner 2026-10-12 晚）：常驻，不随悬停变化
         if (i === 1 && numbered(row)) {
           return (

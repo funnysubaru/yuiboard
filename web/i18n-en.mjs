@@ -18,6 +18,9 @@ const ui = {
   '未解析出任务': 'No tasks parsed',
   '⚠ 读取失败': '⚠ Failed to read',
   '作废': 'Void',
+  '停滞中': 'Stalled',
+  '待同步': 'Not synced',
+  '完成': 'Done',
 
   // —— 通用：分隔符、相对时间、等待时长 ——
   '、': ', ',

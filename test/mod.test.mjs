@@ -227,7 +227,7 @@ test('paneOf 总览：顶栏、数字与 overallStats 一致，需要确认计�
   const filled = Math.round(all.ratio * 10);
   assert.deepEqual(row(p, 'stat:progress').texts, ['▰'.repeat(filled), '▱'.repeat(10 - filled), `${Math.floor(all.ratio * 100)}%`, `${all.counts.done}/${all.total}`]);
   assert.deepEqual(row(p, 'stat:progress').tones, ['success', 'inactive', null, 'subtle']);
-  for (const [s, ic] of [['in_progress', '◔'], ['in_review', '◑'], ['awaiting_merge', '◕']]) {
+  for (const [s, ic] of [['in_progress', '◔ 进行中'], ['in_review', '◑ 等待 review'], ['awaiting_merge', '◕ 等待合并']]) {
     const r = row(p, `stat:${s}`);
     if (all.counts[s]) assert.deepEqual([r.status, r.texts], [s, [`${ic} ${all.counts[s]}`]], s);
     else assert.equal(r, undefined, s);
@@ -251,7 +251,7 @@ test('paneOf 聚焦卡片：标题行带文档名；主任务图标、编号、�
   assert.deepEqual(keys(p.focus), ['focus', 'focus:alpha#1.2', 'focus:alpha#1.2:why']);
   assert.deepEqual(row(p, 'focus').texts, ['本会话正在做 · alpha']);
   const head = row(p, 'focus:alpha#1.2');
-  assert.deepEqual([head.status, head.highlight, head.texts], ['in_progress', true, ['◔', '1.2', '任务 1.2']]);
+  assert.deepEqual([head.status, head.highlight, head.texts], ['in_progress', true, ['◔ 进行中', '1.2', '任务 1.2']]);
   assert.equal(head.href, `${URL0}/#/overview?project=mini&focus=alpha%231.2`);
   assert.deepEqual(row(p, 'focus:alpha#1.2:why').texts, [`${statusWhy(view, task)} · 在等：0.1、beta#1`]); // 同文档只写编号
   // next = blocked，但卡片不写开工判断（owner 已定 4）
@@ -273,8 +273,8 @@ test('paneOf 聚焦卡片：其余关联任务收进「另有 N 个关联任务�
   assert.deepEqual([row(p, 'focus:others').texts, row(p, 'focus:others').toggle, row(p, 'focus:others').open], [['另有 2 个关联任务'], 'focus:others', false]);
   const q = miniPane({ focus, toggled: ['focus:others'] });
   assert.deepEqual(keys(q.focus), ['focus', 'focus:alpha#1.2', 'focus:alpha#1.2:why', 'focus:others', 'focus:beta#2', 'focus:alpha#0.1']);
-  assert.deepEqual([row(q, 'focus:beta#2').kind, row(q, 'focus:beta#2').texts, row(q, 'focus:beta#2').highlight], ['focusItem', ['○', '2', '任务 2'], undefined]);
-  assert.deepEqual(row(q, 'focus:alpha#0.1').texts, ['●', '0.1', '任务 0.1']);
+  assert.deepEqual([row(q, 'focus:beta#2').kind, row(q, 'focus:beta#2').texts, row(q, 'focus:beta#2').highlight], ['focusItem', ['○ 未开始', '2', '任务 2'], undefined]);
+  assert.deepEqual(row(q, 'focus:alpha#0.1').texts, ['● 完成', '0.1', '任务 0.1']);
   // 只有主任务的路径默认展开、只有它在树里标出
   assert.deepEqual([row(p, 'doc:beta').open, row(p, 'task:alpha#0.1').highlight], [false, undefined]);
 });
@@ -301,7 +301,7 @@ test('paneOf 任务树：顺序、归档不显示、分支线名、无分组任�
   assert.deepEqual([row(p, 'task:alpha#1').toggle, row(p, 'task:alpha#1').open], ['task:alpha#1', true]);
   assert.deepEqual([row(p, 'task:alpha#1.2').open, row(p, 'task:alpha#1.2').highlight], [true, true]);
   assert.equal(row(p, 'task:alpha#0.1').toggle, undefined, '没有子任务的行不可折叠');
-  assert.deepEqual(row(p, 'task:alpha#1.2').texts, ['◔', '1.2', '任务 1.2']);
+  assert.deepEqual(row(p, 'task:alpha#1.2').texts, ['◔ 进行中', '1.2', '任务 1.2']);
   assert.equal(row(p, 'task:alpha#0.1').href, `${URL0}/#/overview?project=mini&focus=alpha%230.1`);
   // 没有聚焦任务时全部折叠；没有分支线配置时不标
   const none = miniPane({ focus: { keys: [], recent: false } });
@@ -323,6 +323,9 @@ test('paneOf 状态色调：进行中按会话活动分运行中 / 停滞，已�
   s.tasks.find((v) => v.key === 't#4').syncPending = []; // 空数组不算
   const p = pane(s, { projectId: 'mini', focus: { keys: ['t#2'], recent: false } }); // 聚焦在 t 里，文档默认展开
   assert.deepEqual(s.tasks.map((v) => row(p, `task:${v.key}`).tone), ['run', 'stale', 'review', 'merge', 'sync', 'done', 'todo', 'void']);
+  // N31：圆圈右边写状态文字，与色调一一对应
+  assert.deepEqual(s.tasks.map((v) => row(p, `task:${v.key}`).texts[0]),
+    ['◔ 进行中', '◔ 停滞中', '◑ 等待 review', '◕ 等待合并', '◕ 待同步', '● 完成', '○ 未开始', '⊘ 作废']);
   assert.equal(row(p, 'focus:t#2').tone, 'stale');
 });
 
@@ -351,7 +354,7 @@ test('paneOf 任务树：toggled 与默认相反；父任务收起后子孙不�
   assert.deepEqual(keys(p.body), ['doc:alpha', 'task:alpha#0.1', 'grp:alpha/g1', 'task:alpha#1', 'task:alpha#1.2', 'task:alpha#1.2.3',
     'grp:alpha/g2', 'task:alpha#2', 'doc:beta', 'task:beta#1', 'task:beta#2', 'doc:plan']);
   assert.equal(row(p, 'task:alpha#1.2.3').level, 4);
-  assert.deepEqual([row(p, 'task:alpha#2').status, row(p, 'task:alpha#2').texts[0]], ['void', '⊘']);
+  assert.deepEqual([row(p, 'task:alpha#2').status, row(p, 'task:alpha#2').texts[0]], ['void', '⊘ 作废']);
   assert.equal(row(p, 'task:beta#1').level, 1);
   // 收起 1.2：1.2.3 不出现
   const c = miniPane({ toggled: ['task:alpha#1.2'] });
@@ -532,7 +535,7 @@ test('预算：单个聚焦任务标题 100,001 字 → 截断并标省略，键
   const p = pane(s, { projectId: 'mini', focus: { keys: ['big#7'], recent: false } });
   budgetOk(p);
   const f = row(p, 'focus:big#7');
-  assert.deepEqual(f.texts.slice(0, 2), ['◔', '7']);
+  assert.deepEqual(f.texts.slice(0, 2), ['◔ 进行中', '7']);
   assert.equal(f.texts[2], `${long(200)}…（省略 99801 字）`);
   assert.equal(f.status, 'in_progress');
   assert.equal(f.href, `${URL0}/#/overview?project=mini&focus=big%237`);

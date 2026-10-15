@@ -94,7 +94,7 @@ const START_CMD = 'node ops/devboard-ctl.mjs up';
 // 超长文字截成「前 N 字…（省略 M 字）」；键、编号、状态、href 不经过这里
 const clip = (s, max) => (s == null || s.length <= max ? s : t`${s.slice(0, max)}…（省略 ${s.length - max} 字）`);
 // STATUS_UI / CONFLICT_TEXT / RULE_TEXT 在 mod 环境里按中文求值（无 window），显示时再套 t() 得到当前语言
-// 状态只画图标（owner 2026-10-12 定的面板稿）：颜色由渲染端按 status 上
+// 状态图标：颜色由渲染端按 status 上
 const icon = (s) => (s ? STATUS_UI[s].icon : '⊘');
 const BAR = 10; // 进度条格数
 // 行的状态色调（owner 2026-10-12 定的面板稿 v2）：进行中按会话活动分运行中 / 停滞，等待合并里已合并未 pull 的单列待同步。
@@ -105,6 +105,11 @@ const tinted = (r) => !['todo', 'void', undefined].includes(r.band ?? r.tone);
 const toneOf = (v) => (!v?.status ? 'void'
   : v.status === 'in_progress' ? (v.activity === 'stale' ? 'stale' : 'run')
   : v.status === 'awaiting_merge' && v.syncPending?.length ? 'sync' : TONE[v.status]);
+// 任务行的状态文字（N31，owner 2026-10-15）：写在圆圈右边、编号前面，按行的色调分档，与颜色一一对应。
+// 与 STATUS_UI 同法：模块加载时按中文求值，显示时再套 t()
+const WORD = { run: t('进行中'), stale: t('停滞中'), review: t('等待 review'), merge: t('等待合并'), sync: t('待同步'),
+  done: t('完成'), todo: t('未开始'), void: t('作废') };
+const mark = (v) => `${icon(v?.status)} ${t(WORD[toneOf(v)])}`;
 const size = (rows) => rows.reduce((n, r) => n + rowCost(r), 0);
 
 /**
@@ -286,7 +291,7 @@ export function paneOf({ summary, projects, projectId, view, toggled = [], focus
 function statRows(summary) {
   const all = overallStats(summary);
   const filled = all.ratio == null ? 0 : Math.round(all.ratio * BAR);
-  const count = (s) => all.counts[s] ? [{ key: `stat:${s}`, kind: 'stat', level: 0, status: s, texts: [`${icon(s)} ${all.counts[s]}`] }] : [];
+  const count = (s) => all.counts[s] ? [{ key: `stat:${s}`, kind: 'stat', level: 0, status: s, texts: [`${icon(s)} ${t(WORD[s === 'in_progress' ? 'run' : TONE[s]])} ${all.counts[s]}`] }] : [];
   return [
     { key: 'stat:progress', kind: 'stat', level: 0, tones: ['success', 'inactive', null, 'subtle'],
       texts: ['▰'.repeat(filled), '▱'.repeat(BAR - filled), all.ratio == null ? '—' : `${Math.floor(all.ratio * 100)}%`, `${all.counts.done}/${all.total}`] },
@@ -333,7 +338,7 @@ function focusCard({ summary, href, focus, toggled, now }) {
   const why = [statusWhy(v, task), unmet.length && t`在等：${unmet.map((u) => refLabel(u, task.docId)).join(t('、'))}`].filter(Boolean).join(' · ');
   const main = { key: first, path: pathOf(first), rows: [
     { key: `focus:${first}`, kind: 'focus', level: 1, status: v.status ?? 'void', tone: toneOf(v), highlight: true, href: href('overview', first),
-      texts: [icon(v.status), task.number, clip(mdText(task.title), TITLE_MAX)] },
+      texts: [mark(v), task.number, clip(mdText(task.title), TITLE_MAX)] },
     { key: `focus:${first}:why`, kind: 'focusLine', level: 2, texts: [clip(why, NOTE_MAX)] },
   ] };
   const head = focus.recent
@@ -347,7 +352,7 @@ function focusCard({ summary, href, focus, toggled, now }) {
     const x = tasks.get(k);
     const s = views.get(k).status;
     return { key: k, path: [], rows: [{ key: `focus:${k}`, kind: 'focusItem', level: 2, status: s ?? 'void', tone: toneOf(views.get(k)), href: href('overview', k),
-      texts: [icon(s), x.number, clip(mdText(x.title), TITLE_MAX)] }] };
+      texts: [mark(views.get(k)), x.number, clip(mdText(x.title), TITLE_MAX)] }] };
   }) : [];
   return { focusHead, focusItems: [main, ...others], focusToggle };
 }
@@ -387,7 +392,7 @@ function treeRows({ summary, href, toggled, focus, lines }) {
       // 展开的子孙沿用最外层父任务的竖条与底色，连成一块（owner 2026-10-12）；图标、标题仍按自己的状态
       return [{ key: tkey, kind: 'task', level: level + depth, status: v?.status ?? 'void', tone: toneOf(v), href: href('overview', task.key),
         ...(root && { band: toneOf(views.get(root.key)) }),
-        texts: [icon(v?.status), task.number, clip(mdText(task.title), TITLE_MAX)],
+        texts: [mark(v), task.number, clip(mdText(task.title), TITLE_MAX)],
         ...(parents.has(task.key) && { toggle: tkey, open: isOpen(tkey) }), ...(task.key === primary && { highlight: true }) }];
     });
     // 分隔（面板稿 v2，owner 2026-10-12 晚）：最外层任务（没有 band）连同它展开的子孙算一块。块与块之间空一行（gap），
@@ -434,7 +439,7 @@ function checkRows({ summary, href, toggled }) {
       // 一行：图标、编号、对象 · 差在哪里（owner 2026-10-12 定的面板稿）；出处文件与行号在浏览器里看
       const detail = clip(tx(c.detail), NOTE_MAX);
       const s = task ? views.get(task.key)?.status : null;
-      const texts = task ? [icon(s), task.number, `${clip(mdText(task.title), TITLE_MAX)} · ${detail}`]
+      const texts = task ? [mark(views.get(task.key)), task.number, `${clip(mdText(task.title), TITLE_MAX)} · ${detail}`]
         : c.pr != null ? ['#', String(c.pr), detail]
         : ['◇', `${t`会话 ${clip(sessions.get(c.sessionId)?.title ?? c.sessionId, TITLE_MAX)}`} · ${detail}`];
       rows.push({ key: `${key}:${i}`, kind: 'checkItem', level: 1, ...(target && { href: href('check', target) }),
