@@ -29,7 +29,7 @@ export type Problem =
 // 摘要是 Board 的同构子集（design §3.1），形状由 web/app.mjs 的口径函数认，这里不重复声明
 type Summary = any
 export type Projects = { errors: unknown[]; warnings: unknown[]; projects: { id: string; name: string; [k: string]: unknown }[] }
-export type Focus = { keys: string[]; recent: boolean }
+export type Focus = { keys: string[]; recent: boolean; idle?: boolean }
 
 /** 轮询得到的数据：模块变量，不进 $.state（design §3.2）。任务 6 的 ui.render 读它组装 paneOf 的输入 */
 export type Polled = {

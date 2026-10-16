@@ -113,6 +113,30 @@ test('focusOf：同一时刻点到过的在前、没勾选的在前、没有子�
   assert.equal(focusOf(tree, 's').keys[0], 'alpha#1');
 });
 
+test('focusOf：先看最近一次直接证据（evidenceAt），续活动一样晚的旧点名任务排后（N32）', () => {
+  const at = '2025-09-27T00:00:00Z';
+  const s = { docs: DOCS, tasks: [
+    view('alpha#0.1', [{ ...link('s', 'running', at), named: true, evidenceAt: '2025-09-20T00:00:00Z' }]),
+    view('beta#1', [{ ...link('s', 'running', at), named: true, evidenceAt: '2025-09-26T00:00:00Z' }]),
+    view('beta#2', [link('s', 'running', at)]), // 旧服务的摘要没有 evidenceAt：按 lastAt 算
+  ] };
+  assert.deepEqual(focusOf(s, 's').keys, ['beta#2', 'beta#1', 'alpha#0.1']);
+  delete s.tasks[2].sessions[0].activity;
+  s.tasks[2].sessions[0].lastAt = '2025-09-25T00:00:00Z';
+  assert.deepEqual(focusOf(s, 's').keys, ['beta#1', 'alpha#0.1'], '证据时间相同再看 lastAt');
+});
+
+test('focusOf：已完成、作废的任务不算正在做；关联的任务都完成或作废时标 idle（N32）', () => {
+  const at = '2025-09-27T00:00:00Z';
+  const done = (k, ev) => ({ ...view(k, [{ ...link('s', 'running', at), evidenceAt: ev }]), status: 'done' });
+  const s = { docs: DOCS, tasks: [done('beta#1', '2025-09-26T00:00:00Z'), view('alpha#0.1', [{ ...link('s', 'running', at), evidenceAt: '2025-09-20T00:00:00Z' }])] };
+  assert.deepEqual(focusOf(s, 's'), { keys: ['alpha#0.1'], recent: false, at }, '完成的 beta#1 证据更新，也不算正在做');
+  s.tasks[1] = { ...s.tasks[1], status: undefined }; // 作废
+  assert.deepEqual(focusOf(s, 's'), { keys: ['beta#1'], recent: true, at, idle: true }, '都完成或作废：取证据最新的，标 idle');
+  s.tasks.push(view('beta#2', [link('s', 'recent', '2025-09-01T00:00:00Z')]));
+  assert.deepEqual(focusOf(s, 's'), { keys: ['beta#1'], recent: true, at }, '还有没完成的关联任务（没在运行）就不是 idle');
+});
+
 test('focusOf：没有关联', () => {
   assert.deepEqual(focusOf(SUMMARY, 's-none'), { keys: [], recent: false, at: null });
   assert.deepEqual(focusOf({ docs: [], tasks: [] }, 's-run'), { keys: [], recent: false, at: null });
@@ -282,6 +306,8 @@ test('paneOf 聚焦卡片：其余关联任务收进「另有 N 个关联任务�
 test('paneOf 聚焦卡片：recent 写「最近做的 · 文档 · 多久前」；没有聚焦任务只一行；归档 / 不存在的键不列', () => {
   assert.deepEqual(row(miniPane({ focus: { keys: ['alpha#1.2'], recent: true, at: '2025-09-26T22:30:00Z' } }), 'focus').texts, ['本会话最近做的 · alpha · 2 小时前']);
   assert.deepEqual(row(miniPane({ focus: { keys: ['alpha#1.2'], recent: true } }), 'focus').texts, ['本会话最近做的 · alpha']);
+  assert.deepEqual(row(miniPane({ focus: { keys: ['alpha#1.2'], recent: true, idle: true, at: '2025-09-26T22:30:00Z' } }), 'focus').texts,
+    ['本会话当前没有进行中的任务 · 最近做的 · alpha · 2 小时前'], 'N32：任务都完成了');
   const none = miniPane({ focus: { keys: ['nope#1'], recent: false } });
   assert.deepEqual(none.focus.map((r) => [r.key, r.kind, r.texts]), [['focus', 'empty', ['本会话还没关联到任务']]]);
   assert.deepEqual(miniPane({ focus: null }).focus.map((r) => r.kind), ['empty']);
