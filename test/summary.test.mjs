@@ -69,7 +69,7 @@ const SPEC = {
   docTask: ['key', 'number', 'title', 'checkbox', 'void', 'docId', 'groupId', 'parentKey', 'duplicate'],
   view: ['key', 'status', 'rule', 'docOnly', 'syncPending', 'syncUnchecked', 'inProgressBy', 'activity', 'childSummary', 'next', 'prs', 'sessions', 'deps'],
   prLink: ['pr', 'partial', 'removedManually'],
-  sessionLink: ['sessionId', 'activity', 'firstAt', 'lastAt'],
+  sessionLink: ['sessionId', 'activity', 'firstAt', 'lastAt', 'evidenceAt'],
   deps: ['on', 'unmet', 'external'],
   conflict: ['type', 'taskKey', 'pr', 'sessionId', 'detail', 'source'],
   pr: ['number', 'title', 'branchLine', 'tasks'],

@@ -691,6 +691,36 @@ test('子 agent 各算各的：没写任务的派活冻结派活那一刻的主�
   assert.equal(t['1'].sessions[0].firstAt, at(60), '空焦点时派出的 te 不给任何任务续活动');
 });
 
+test('N32 command：主线的命令接管主线焦点；子 agent 的命令只换它那一路；对不上任务的命令不清焦点、不报冲突', () => {
+  const docs = [withPath(inline(SIMPLE))];
+  const b = sBoard(docs, [session('s6', [
+    say(docs, '做任务 1', at(60), at(55)),
+    { ...say(docs, '（虚构）找一下相关代码', at(54), at(54), 'dispatch'), toolUseId: 'tf' },
+    sig('agent', at(53), at(50), { lane: 'tf' }),
+    { ...say(docs, 'fix: 任务 3', at(49), at(1), 'command'), lane: 'tf' }, // 子 agent 提交了任务 3
+    say(docs, 'feat: 任务 2', at(40), at(30), 'command'), // 主线提交了任务 2
+    say(docs, 'fix: 任务 99', at(29), at(2), 'command'), // 对不上
+  ])]);
+  const t = byNum(b);
+  const l = (n) => [t[n].sessions[0]?.lastAt, t[n].sessions[0]?.evidenceAt];
+  assert.deepEqual(l('1'), [at(50), at(60)], '主线换到任务 2 之前，任务 1 续到子 agent 开工');
+  assert.deepEqual(l('2'), [at(2), at(40)], '对不上的命令不清主线焦点');
+  assert.deepEqual(l('3'), [at(1), at(49)], '子 agent 那一路换成它提交的任务 3');
+  assert.deepEqual(b.conflicts.filter((c) => c.type === 'h'), []);
+});
+
+test('N32 command：没认出任务的命令不打断上一条 PR 登记的活动', () => {
+  const docs = [withPath(inline(SIMPLE))];
+  const prs = [{ number: 7, title: '任务 4', body: '', headRefName: 'feat-4', baseRefName: 'main', state: 'OPEN', isDraft: true, url: 'u', updatedAt: at(100) }];
+  const t = byNum(sBoard(docs, [session('s7', [
+    say(docs, '做任务 1', at(60), at(55)),
+    sig('pr-link', at(50), at(40), { pr: 7 }),
+    say(docs, 'docs: ADR-0099 任务 99', at(39), at(1), 'command'), // 认不出：PR #7 的任务 4 照样续到最后
+  ])], { prs }));
+  assert.deepEqual([t['4'].sessions[0].lastAt, t['4'].sessions[0].evidenceAt], [at(1), at(50)]);
+  assert.equal(t['1'].sessions[0].lastAt, at(1), '主线焦点照常续');
+});
+
 test('子 agent 各算各的：子 agent 的分支信号只管它自己这一路，不续、不改主线焦点与主线分支', () => {
   const docs = [withPath(inline(SIMPLE))];
   const prs = [pr(11, { title: '任务 4', headRefName: 'feat-4' })];

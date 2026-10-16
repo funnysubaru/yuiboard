@@ -609,7 +609,7 @@ function waitingList(prs, info, sync, config, nowMs, extra = []) {
 const MINUTE = 6e4;
 const DAY = 864e5;
 const hasTaskRefs = (r) => r.keys.length + r.nums.length + r.codes.length > 0;
-const SIGNAL_TEXT = { prompt: msg('人发消息'), dispatch: msg('子 agent 派活') };
+const SIGNAL_TEXT = { prompt: msg('人发消息'), dispatch: msg('子 agent 派活'), command: msg('AI 执行的命令') };
 
 /**
  * 会话 ↔ 任务（design §3.8.3）。对每个会话按信号时间顺序走一遍：
@@ -621,6 +621,9 @@ const SIGNAL_TEXT = { prompt: msg('人发消息'), dispatch: msg('子 agent 派�
  * 4. 每条信号的 until（到下一条信号前最后一条记录的时间，5.2 给出）计入当前焦点 → 焦点段的最后活动时间。
  * 5. edit → 被改的任务行；pr-link → 该 PR 的全部关联任务；branch = 某 PR head → 该 PR 的全部关联任务，
  *    且在切到下一个分支前一直计活动（会话整段都在这条分支上）。
+ * 6. command（N32：AI 执行的提交、起 PR、建分支命令里的任务号）→ 像点名一样设这一路（主线或那一路子 agent）的焦点；
+ *    对不上任务时不清焦点、不报冲突（命令常在别的仓库里跑，报出来全是噪音）。
+ * 每条关联记 evidenceAt = 最近一次直接点到它的信号时间（续活动不算），mod 选主任务先看它（N32）。
  * ponytail: 5.2 的 branch 信号每个分支只记首次，A → B → A 切回 A 时不再计 A；真遇到再让 5.2 记每次切换。
  * ponytail: 焦点只有一个——同一时刻并行派出多个子 agent 时只有最后一个派的任务算「运行中」，其余是「最近活跃」
  *           （状态照样是进行中）；要精确得按子 agent 文件各自的时间算，改动在 5.2。
@@ -630,7 +633,7 @@ const SIGNAL_TEXT = { prompt: msg('人发消息'), dispatch: msg('子 agent 派�
  * @param {object[]} prs PullRequest[]（用 headRefName 对 branch 信号）
  * @param {Map<number, {tasks: string[]}>} prInfo linkPrs(...).prs
  * @param {object} config ProjectConfig（用 branchLines 的 workspace / docFilter）
- * @returns {{ links: {sessionId: string, taskKey: string, firstAt: string, lastAt: string,
+ * @returns {{ links: {sessionId: string, taskKey: string, firstAt: string, lastAt: string, evidenceAt?: string,
  *     evidence: {kind: string, pos: {at: string, file: string, line: number}, note: string}[]}[],
  *   conflicts: {type: 'h', sessionId: string, source: {file: string, line: number, text: string}, detail: string}[],
  *   linkedIds: Set<string> }}
@@ -652,11 +655,15 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
     }
     const ctxIds = [...ctx];
     const per = new Map(); // 任务键 → SessionLink
+    let direct = []; // 当前这条信号直接点到的任务
     const hit = (key, g, lastAt, note) => {
       const l = per.get(key) ?? per.set(key, { sessionId: s.id, taskKey: key, firstAt: g.at, lastAt, evidence: [] }).get(key);
       if (Date.parse(g.at) < Date.parse(l.firstAt)) l.firstAt = g.at;
       if (Date.parse(lastAt) > Date.parse(l.lastAt)) l.lastAt = lastAt;
-      if (note) l.evidence.push({ kind: g.kind, pos: { at: g.at, file: g.file, line: g.line }, note });
+      if (!note) return;
+      direct.push(key);
+      l.evidence.push({ kind: g.kind, pos: { at: g.at, file: g.file, line: g.line }, note });
+      if (!l.evidenceAt || Date.parse(g.at) > Date.parse(l.evidenceAt)) l.evidenceAt = g.at;
     };
     const reported = new Set();
     const issue = (g, detail) => {
@@ -673,8 +680,12 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
     const lanes = new Set(s.signals.filter((g) => g.kind === 'agent').map((g) => g.lane));
     const laneTasks = new Map();
     const branchTasks = new Map(); // lane（主线为 null）→ 当前分支 = 某 PR head 时该 PR 的任务
+    // N32：没认出任务的命令（提交信息写的是对不上的编号）不打断上一条 PR 登记 / 改任务行的活动（回放实测：登记 PR 后
+    // 提交「任务 114 …」认不出，PR 的任务就停在提交那一刻，后面的活动全记到旧焦点上）
+    const carry = new Map(); // lane → 上一条 pr-link / edit 点到的任务
     for (const g of s.signals) {
-      if ((g.kind === 'prompt' || g.kind === 'dispatch') && hasTaskRefs(g.refs)) {
+      direct = [];
+      if ((g.kind === 'prompt' || g.kind === 'dispatch' || g.kind === 'command') && hasTaskRefs(g.refs)) {
         const res = resolveRefs(g.refs, cands, ctxIds);
         // 主线程收紧（实测误报）：会话没有任何文档上下文、消息里只有裸编号（没写 docId / 任务键 / 里程碑代号），
         // 而候选文档不止一份时，「在全部文档里恰好唯一」不足为凭——编排会话里的「5.3」恰好只在某份无关 spec
@@ -686,13 +697,21 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
         // 子 agent 派活的说明通常会写明 spec 名；只有裸编号的派活多半属于别的项目 / 仓库外的 spec（实测：派 devboard
         // 自己的任务 3.1…6.3 被整会话上下文——含子 agent 执行过的命令——带到 task-panel-backend），一律不采信。
         if (bareOnly && g.kind === 'dispatch' && cands.length > 1) res.tasks = [];
-        for (const a of res.ambiguous) issue(g, msg`${name}里的「${a.raw}」有歧义，可能是 ${brief(a.candidates)}`);
-        for (const m of res.missing) {
-          issue(g, onlyDuplicates(m, cands, g.refs.docIds) ? msg`${name}里的「${m}」对应的编号在文档里重复出现，无法确定是哪一条`
-            : msg`${name}引用了不存在的任务：${m}`);
+        // 命令常在别的仓库里跑（N32），对不上任务不报冲突
+        if (g.kind !== 'command') {
+          for (const a of res.ambiguous) issue(g, msg`${name}里的「${a.raw}」有歧义，可能是 ${brief(a.candidates)}`);
+          for (const m of res.missing) {
+            issue(g, onlyDuplicates(m, cands, g.refs.docIds) ? msg`${name}里的「${m}」对应的编号在文档里重复出现，无法确定是哪一条`
+              : msg`${name}引用了不存在的任务：${m}`);
+          }
         }
         const note = msg`${SIGNAL_TEXT[g.kind]}：「${g.snippet}」`;
-        if (g.kind === 'dispatch' && lanes.has(g.toolUseId)) {
+        if (g.kind === 'command') {
+          // 认出任务才换这一路的焦点；认不出不清（与人发消息不同：命令没写任务号不代表转去做别的了）
+          if (res.tasks.length && g.lane) laneTasks.set(g.lane, res.tasks);
+          else if (res.tasks.length) { focus = res.tasks; focusBy = g; }
+          for (const k of res.tasks) hit(k, g, g.until, note);
+        } else if (g.kind === 'dispatch' && lanes.has(g.toolUseId)) {
           laneTasks.set(g.toolUseId, res.tasks.length ? res.tasks : focus);
           for (const k of res.tasks) hit(k, g, g.at, note);
         } else {
@@ -722,6 +741,10 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
       if (g.kind === 'dispatch' && lanes.has(g.toolUseId) && !laneTasks.has(g.toolUseId)) laneTasks.set(g.toolUseId, focus);
       const own = g.lane ? laneTasks.get(g.lane) ?? focus : focus;
       for (const k of [...own, ...(branchTasks.get(g.lane ?? null) ?? [])]) hit(k, g, g.until, null);
+      const lane = g.lane ?? null;
+      if (g.kind === 'pr-link' || g.kind === 'edit') carry.set(lane, direct);
+      else if (g.kind === 'command' && !direct.length) for (const k of carry.get(lane) ?? []) hit(k, g, g.until, null);
+      else carry.delete(lane);
     }
     if (per.size) linkedIds.add(s.id);
     links.push(...per.values());
