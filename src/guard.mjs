@@ -102,8 +102,8 @@ function prTitlesOf(words) {
 /**
  * 一条 Bash 命令里 AI 写下的、能看出在做哪个任务的文字（N32）：`git commit` 的提交标题、`gh pr create` / `gh pr edit` 的标题、
  * 新建的分支名（`git worktree add -b`、`git checkout -b`、`git switch -c`，大写选项同）。提交标题取 `-m` 值的第一行，
- * `-m "$(cat <<'EOF' …)"` 取 heredoc 正文的第一行。读不出的一律不返回。
- * ponytail: -m 是 heredoc 时取整条命令里的第一段 heredoc（AI 的写法总是先 commit），前面另有 heredoc 时会取错；不认 -F 文件。
+ * `-m "$(cat <<'EOF' …)"` 取这个参数自己那段 heredoc 正文的第一行；`-m "$MSG"`、不含 heredoc 的命令替换读不出，一律不返回
+ * （别的命令的 heredoc 不能拿来当提交标题，yuiboard PR #10 review）。不认 -F 文件。
  * @param {string} command
  * @returns {{ text: string, branch: boolean }[]}
  */
@@ -129,12 +129,19 @@ export function commandTexts(command) {
       const inline = sub === 'commit' && w.startsWith('--message=') ? w.slice('--message='.length) : undefined;
       if (inline === undefined && !flag.test(w)) continue;
       const v = inline ?? words[j + 1];
-      const t = sub !== 'commit' ? v : typeof v === 'string' ? subject(v) : subject(bodies[0] ?? '');
+      const t = sub !== 'commit' ? v : typeof v === 'string' ? subject(v) : v && subject(ownHeredoc(text, v, bodies) ?? '');
       if (typeof t === 'string' && t) out.push({ text: t, branch: sub !== 'commit' });
       break; // 只取第一处：第二个 -m 是提交正文
     }
   }
   return out;
+}
+
+// 读不出字面值的词里写着 heredoc 时，取它自己那段正文：stripHeredocs 按 opener 出现的顺序收正文，词前面有几个 opener 就是第几段。
+// 词里没有 opener（变量、普通命令替换）→ null
+function ownHeredoc(text, word, bodies) {
+  if (heredocOpeners(word.text).next().done) return null;
+  return bodies[[...heredocOpeners(text.slice(0, word.at))].length] ?? null;
 }
 
 // gh pr create / edit 里带值的选项（gh 2.x）：分词时跳过它们的值
@@ -157,7 +164,7 @@ function stripHeredocs(s, bodies = null) {
     const line = lines[i];
     out.push(line);
     const pending = [];
-    for (const m of line.matchAll(/(?<!<)<<(?!<)(-?)[ \t]*(?:'([^']*)'|"([^"]*)"|([^\s;&|<>()'"`$\\]+))?/g)) {
+    for (const m of heredocOpeners(line)) {
       const delim = m[2] ?? m[3] ?? m[4];
       const next = line[m.index + m[0].length];
       if (!delim || (next !== undefined && !/[\s;&|<>()]/.test(next))) return null;
@@ -174,7 +181,10 @@ function stripHeredocs(s, bodies = null) {
   return out.join('\n');
 }
 
-// 极简 shell 分词：按控制符切成多条命令，每条是词的数组；读不出字面值的词（含 $、`）记成 null。
+const heredocOpeners = (s) => s.matchAll(/(?<!<)<<(?!<)(-?)[ \t]*(?:'([^']*)'|"([^"]*)"|([^\s;&|<>()'"`$\\]+))?/g);
+
+// 极简 shell 分词：按控制符切成多条命令，每条是词的数组；读不出字面值的词（含 $、`）记成 { text, at }（原样文字与起点下标），
+// 调用方只认字符串，commandTexts 拿它找自己的 heredoc。
 // ponytail: 不处理 $'…'、子 shell 里的命令；这些情况的标题按读不出放行。
 function commands(s) {
   const cmds = [];
@@ -182,13 +192,15 @@ function commands(s) {
   let word = '';
   let has = false; // 当前词是否已开始（空引号 "" 也是一个词）
   let opaque = false;
+  let at = 0; // 当前词的起点
   const end = () => {
-    if (has) words.push(opaque ? null : word);
+    if (has) words.push(opaque ? { text: word, at } : word);
     word = ''; has = false; opaque = false;
   };
   const cut = () => { end(); if (words.length) cmds.push(words); words = []; };
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
+    if (!has) at = i;
     if (c === "'") {
       const j = s.indexOf("'", i + 1);
       if (j < 0) { opaque = true; has = true; break; }

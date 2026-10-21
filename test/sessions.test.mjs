@@ -481,6 +481,22 @@ test('N32 扫描到面板：一条命令里先提交、后起 PR，后续活动�
   }
 });
 
+test('N32 扫描到面板：读不出的提交信息不拿后面 cat 的 heredoc 当证据，焦点不变（yuiboard PR #10 review）', async () => {
+  const doc = { docId: 'devboard-mvp', path: '.claude/specs/devboard-mvp/tasks.md', archived: false,
+    ...parseTasksDoc('- [ ] 2 甲\n- [ ] 3 乙\n', 'devboard-mvp') };
+  for (const msg of ['"$MSG"', '"$(git log -1 --format=%s)"']) {
+    const command = `git commit -m ${msg}; cat <<'EOF'\nfeat: devboard-mvp#3 乙\nEOF`;
+    const { s } = await scanOne((repo) => [
+      human(repo, T('01:00'), '做 devboard-mvp 的任务 2'),
+      ai(repo, T('01:30'), [tool('Bash', { command })]),
+      ai(repo, T('01:40'), [text('（虚构）继续')]),
+    ]);
+    assert.deepEqual(s.signals.filter((g) => g.kind === 'command'), [], msg);
+    const { links } = linkSessions([doc], [s], [], new Map(), {});
+    assert.deepEqual(links.map((l) => [l.taskKey, l.lastAt]), [['devboard-mvp#2', T('01:40')]], msg);
+  }
+});
+
 test('touch：Edit / Write 路径与 Bash 命令里的规划文档目录；整词匹配、每份文档只记第一次', async () => {
   const { s } = await scanOne((repo) => [
     human(repo, T('01:00'), '看一下'),

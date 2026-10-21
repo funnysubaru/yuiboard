@@ -86,6 +86,10 @@ test('commandTexts：提交标题（含 heredoc）、PR 标题、新建分支名
   assert.deepEqual(texts(`git switch -c fix/n4; git checkout -B task-3.2; git checkout main`), ['b:fix/n4', 'b:task-3.2']);
   assert.deepEqual(texts(`gh pr create --draft --title "feat: N32 焦点" --body "$(cat <<'EOF'\n任务 9\nEOF\n)"`), ['t:feat: N32 焦点']);
   assert.deepEqual(texts(`git commit -m "$(cat <<'EOF'\nfeat: x\n`), [], 'heredoc 没有结束行');
+  // 读不出的提交信息不拿别的命令的 heredoc 充数（yuiboard PR #10 review）；前面另有 heredoc 时取它自己那段
+  assert.deepEqual(texts(`git commit -m "$MSG"; cat <<'EOF'\nfeat: alpha#2\nEOF`), [], '变量');
+  assert.deepEqual(texts(`git commit -m "$(git log -1 --format=%s)"; cat <<'EOF'\nfeat: alpha#2\nEOF`), [], '不含 heredoc 的命令替换');
+  assert.deepEqual(texts(`cat <<'A'\nalpha#9\nA\ngit commit -m "$(cat <<'EOF'\nfeat: alpha#3\nEOF\n)"`), ['t:feat: alpha#3'], '前面另有 heredoc');
   // 按命令先后输出（PR #54 review）：扫描器对同一时刻的信号只给最后一条续活动
   assert.deepEqual(texts(`git commit -m "fix: alpha#1" && gh pr create --title "feat: alpha#2" --body x`), ['t:fix: alpha#1', 't:feat: alpha#2']);
   assert.deepEqual(texts(`gh pr edit 3 --title "feat: alpha#2" && git commit -m "fix: alpha#1"`), ['t:feat: alpha#2', 't:fix: alpha#1']);
