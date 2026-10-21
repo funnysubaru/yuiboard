@@ -190,6 +190,7 @@ async function checkGitDir(dir) {
     await run('git', ['-C', dir, 'rev-parse', '--git-dir'], {
       timeout: 10_000,
       env: gitEnv(),
+      windowsHide: true,
     });
     return null;
   } catch (e) {

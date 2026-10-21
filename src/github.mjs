@@ -246,6 +246,7 @@ function ghOptions() {
     timeout: 30_000,
     maxBuffer: 32 * 1024 * 1024,
     env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' },
+    windowsHide: true,
   };
 }
 
