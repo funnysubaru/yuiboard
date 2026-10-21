@@ -12,13 +12,14 @@ const DOC = ['docId', 'title', 'path', 'kind', 'archived', 'workspaceId', 'sourc
 const DOC_TASK = ['key', 'number', 'title', 'checkbox', 'void', 'docId', 'groupId', 'parentKey', 'duplicate'];
 const VIEW = ['key', 'status', 'rule', 'docOnly', 'syncPending', 'syncUnchecked', 'inProgressBy', 'activity', 'childSummary', 'next'];
 const PR_LINK = ['pr', 'partial', 'removedManually'];
-const SESSION_LINK = ['sessionId', 'activity', 'firstAt', 'lastAt'];
+const SESSION_LINK = ['sessionId', 'activity', 'firstAt', 'lastAt', 'evidenceAt'];
 const DEPS = ['on', 'unmet', 'external'];
 const CONFLICT = ['type', 'taskKey', 'pr', 'sessionId', 'detail', 'source'];
 const PR = ['number', 'title', 'branchLine', 'tasks'];
 const SESSION = ['id', 'source', 'title'];
-// 会话关联里只有人发消息 / 派活点名、改任务行这三种是点到具体任务的；只靠分支、PR 登记连上的不算（mod 选主任务用，owner 2026-10-12 定）
-const NAMED = new Set(['prompt', 'dispatch', 'edit']);
+// 会话关联里只有人发消息 / 派活点名、改任务行、AI 命令里写了任务号（N32）是点到具体任务的；只靠分支、PR 登记连上的不算
+// （mod 选主任务用，owner 2026-10-12 定）
+const NAMED = new Set(['prompt', 'dispatch', 'edit', 'command']);
 const sessionLink = (l) => ({ ...pick(l, SESSION_LINK), ...(l.evidence?.some((e) => NAMED.has(e.kind)) && { named: true }) });
 
 // 只拷原对象实有的键：缺的字段在摘要里也缺，不凭空补 undefined / null

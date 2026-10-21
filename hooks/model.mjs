@@ -39,29 +39,34 @@ export function pickProject(entries, sessionId, cwd) {
 
 /**
  * 当前会话的聚焦任务（需求 5.2，owner 2026-10-12 改）：只认 devboard 的关联结果，只算未归档文档里的任务。
- * 关联里有运行中的 → 全部运行中，按 lastAt 从晚到早（同一时刻按文档顺序），keys[0] 是卡片上展开的主任务；
- * 否则取该会话关联 lastAt 最晚的一个，recent: true。at = 主任务的 lastAt。
+ * 关联里有运行中且没完成的 → 全部列出，按下面的 rank 排，keys[0] 是卡片上展开的主任务；
+ * 否则取 rank 最前的一个，recent: true；这时关联的任务全都完成或作废，再标 idle: true（N32）。at = 主任务的 lastAt。
  */
 export function focusOf(summary, sessionId) {
   const links = new Map();
   for (const v of summary.tasks) {
     const l = v.sessions?.find((s) => s.sessionId === sessionId);
-    if (l) links.set(v.key, l);
+    if (l) links.set(v.key, { ...l, status: v.status });
   }
   const tasks = summary.docs.filter((d) => !d.archived).flatMap((d) => d.tasks);
   const parents = new Set(tasks.map((t) => t.parentKey).filter(Boolean));
   const linked = tasks.filter((t) => links.has(t.key)).map((t) => ({ key: t.key, checkbox: t.checkbox, ...links.get(t.key) }));
-  // 时间写法不统一（有无毫秒），按时间比。同一时刻（一个 PR 连上的几十个任务时间都一样）依次看：点到过的（named）在前、
+  // 先看最近一次直接点到它的时间（evidenceAt，N32）：续活动会让早先点名的任务和后来真正在做的任务 lastAt 一样晚，
+  // 只看 lastAt 时早点名的胜出（2026-10-16 实测：全部做完后仍显示 N9）。时间写法不统一（有无毫秒），按时间比。
+  // 再看 lastAt；同一时刻（一个 PR 连上的几十个任务时间都一样）依次看：点到过的（named）在前、
   // 没勾选的在前、没有子任务的在前（具体的那一步比笼统的父任务有用），再按文档顺序（owner 2026-10-12 定；
   // 原先只按文档顺序，开发 PR 的会话总是落到第一个、早已完成的任务）
-  const rank = (l, i) => [-(Date.parse(l.lastAt) || 0), l.named ? 0 : 1, l.checkbox === 'open' ? 0 : 1, parents.has(l.key) ? 1 : 0, i];
+  const time = (x) => Date.parse(x) || 0;
+  const rank = (l, i) => [-time(l.evidenceAt ?? l.lastAt), -time(l.lastAt), l.named ? 0 : 1, l.checkbox === 'open' ? 0 : 1, parents.has(l.key) ? 1 : 0, i];
   const byRank = (a, b) => a[0].reduce((d, x, j) => d || x - b[0][j], 0);
   const latest = (list) => list.map((l, i) => [rank(l, i), l]).sort(byRank).map((r) => r[1]);
-  const running = latest(linked.filter((l) => l.activity === 'running'));
+  // 已完成、作废的任务不算「正在做」（N32）：会话做完以后还在续活动，别一直写「正在做」一个早已完成的任务
+  const finished = (l) => !l.status || l.status === 'done';
+  const running = latest(linked.filter((l) => l.activity === 'running' && !finished(l)));
   if (running.length) return { keys: running.map((l) => l.key), recent: false, at: running[0].lastAt ?? null };
   if (!linked.length) return { keys: [], recent: false, at: null };
   const [last] = latest(linked);
-  return { keys: [last.key], recent: true, at: last.lastAt ?? null };
+  return { keys: [last.key], recent: true, at: last.lastAt ?? null, ...(linked.every(finished) && { idle: true }) };
 }
 
 /** 展开该任务要打开的折叠键，从外到内：doc:、grp:（有分组时）、沿 parentKey 的各级祖先 task:（不含自身）。任务不存在 → []。 */
@@ -219,7 +224,7 @@ export const conventionRules = () => [
  * @param {string|null} input.projectId 认出 / 手动选的项目
  * @param {'overview'|'check'|'diag'} input.view
  * @param {string[]} input.toggled      与默认相反的折叠键（doc:<docId>、grp:<docId>/<分组>、task:<任务键>、check:<类型>）
- * @param {{keys:string[], recent:boolean}|null} input.focus  focusOf 的结果
+ * @param {{keys:string[], recent:boolean, idle?:boolean}|null} input.focus  focusOf 的结果
  * @param {string} input.url            服务地址，如 http://127.0.0.1:4317
  * @param {number} input.now            毫秒时间戳
  * @param {Array<{kind:'offline',url:string,message:string}|{kind:'http',status:number,messages:string[]}|{kind:'oversize'}>} input.problems
@@ -239,7 +244,7 @@ export const conventionRules = () => [
  *   - header：title（YUIBoard，项目名不同才跟在后面）、nav（视图按钮：view = 'overview'|'check'|'diag'，active = 当前视图；
  *     需要确认的 texts[1] 是计数，诊断的 texts[1] 是「⚠ 有问题的项数」）、link（在浏览器打开）、stat（总览数字，一行排开，只在总览）
  *   - banners：banner（warn；超过 5 条时第 6 行合成「另有 N 条错误，见诊断」）
- *   - focus（只在总览）：focusHead（标题行：本会话正在做 / 最近做的 · 文档 [· 多久前]）| empty（本会话还没关联到任务）、
+ *   - focus（只在总览）：focusHead（标题行：本会话正在做 / 最近做的 / 当前没有进行中的任务 · 最近做的 · 文档 [· 多久前]）| empty（本会话还没关联到任务）、
  *     focus（主任务：图标、编号、标题，href 常显）、focusLine（状态原因 · 在等）、
  *     focusToggle（另有 N 个关联任务，toggle = 'focus:others'，默认收起）、focusItem（展开后的其余任务，一行一个）、more（另有 N 个）
  *   - body：总览 doc / group / task（href 画在编号上，owner 2026-10-12 晚）；需要确认 checkGroup / checkItem / more（另有 N 条）/ empty；
@@ -341,8 +346,8 @@ function focusCard({ summary, href, focus, toggled, now }) {
       texts: [mark(v), task.number, clip(mdText(task.title), TITLE_MAX)] },
     { key: `focus:${first}:why`, kind: 'focusLine', level: 2, texts: [clip(why, NOTE_MAX)] },
   ] };
-  const head = focus.recent
-    ? [t('本会话最近做的'), task.docId, focus.at && ago(focus.at, now)].filter(Boolean)
+  const head = focus.idle ? [t('本会话当前没有进行中的任务'), t('最近做的'), task.docId, focus.at && ago(focus.at, now)].filter(Boolean)
+    : focus.recent ? [t('本会话最近做的'), task.docId, focus.at && ago(focus.at, now)].filter(Boolean)
     : [t('本会话正在做'), task.docId];
   const focusHead = [{ key: 'focus', kind: 'focusHead', level: 0, texts: [head.join(' · ')] }];
   if (!rest.length) return { focusHead, focusItems: [main], focusToggle: null };

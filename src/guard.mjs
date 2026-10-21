@@ -73,27 +73,75 @@ export function prTitles(command) {
   const text = stripHeredocs(String(command));
   // heredoc 没有结束行：正文与命令分不清，宁可放行
   if (text === null) return out;
+  for (const words of commands(text)) out.push(...prTitlesOf(words));
+  return out;
+}
+
+// 分好词的一条命令里 gh pr create / edit 的标题（prTitles 与 commandTexts 共用，后者要保持动作的先后顺序）
+function prTitlesOf(words) {
+  // 命令名是这条命令的第一个词（前面的环境变量赋值 FOO=1 跳过）：`echo gh pr create …` 不算
+  const i = words.findIndex((w) => typeof w !== 'string' || !/^[A-Za-z_]\w*=/.test(w));
+  if (words[i] !== 'gh' || words[i + 1] !== 'pr' || !['create', 'edit'].includes(words[i + 2])) return [];
+  const titles = [];
+  let base = null;
+  for (let j = i + 3; j < words.length; j++) {
+    const w = words[j];
+    if (typeof w !== 'string') continue;
+    // 带值的选项：它的值不再当选项看（--body '--title=任务 99' 里的不是标题，PR review）
+    const eq = w.indexOf('=');
+    const flag = w.startsWith('--') && eq > 0 ? w.slice(0, eq) : w;
+    const inline = flag !== w ? w.slice(eq + 1) : undefined;
+    if (!WITH_VALUE.has(flag)) continue;
+    const value = inline ?? words[++j];
+    if (flag === '--title' || flag === '-t') { if (typeof value === 'string') titles.push(value); }
+    else if (flag === '--base' || flag === '-B') base = typeof value === 'string' ? value : null;
+  }
+  return titles.map((title) => ({ title, base }));
+}
+
+/**
+ * 一条 Bash 命令里 AI 写下的、能看出在做哪个任务的文字（N32）：`git commit` 的提交标题、`gh pr create` / `gh pr edit` 的标题、
+ * 新建的分支名（`git worktree add -b`、`git checkout -b`、`git switch -c`，大写选项同）。提交标题取 `-m` 值的第一行，
+ * `-m "$(cat <<'EOF' …)"` 取这个参数自己那段 heredoc 正文的第一行；`-m "$MSG"`、不含 heredoc 的命令替换读不出，一律不返回
+ * （别的命令的 heredoc 不能拿来当提交标题，yuiboard PR #10 review）。不认 -F 文件。
+ * @param {string} command
+ * @returns {{ text: string, branch: boolean }[]}
+ */
+export function commandTexts(command) {
+  const bodies = [];
+  const text = stripHeredocs(String(command), bodies);
+  if (text === null) return [];
+  const out = [];
+  const subject = (s) => s.split('\n').map((l) => l.trim()).find(Boolean);
+  // 按命令的先后输出：扫描器给同一时刻的信号排序时，后续活动只续最后一条，顺序反了焦点就落到先做的那个任务上（PR #54 review）
   for (const words of commands(text)) {
-    // 命令名是这条命令的第一个词（前面的环境变量赋值 FOO=1 跳过）：`echo gh pr create …` 不算
-    const i = words.findIndex((w) => typeof w !== 'string' || !/^[A-Za-z_]\w*=/.test(w));
-    if (words[i] !== 'gh' || words[i + 1] !== 'pr' || !['create', 'edit'].includes(words[i + 2])) continue;
-    const titles = [];
-    let base = null;
-    for (let j = i + 3; j < words.length; j++) {
+    out.push(...prTitlesOf(words).map((t) => ({ text: t.title, branch: false })));
+    let i = words.findIndex((w) => typeof w !== 'string' || !/^[A-Za-z_]\w*=/.test(w));
+    if (words[i] !== 'git') continue;
+    // git 的全局选项：-C <路径>、-c <键=值> 带值，其余不带
+    for (i++; typeof words[i] === 'string' && words[i].startsWith('-'); i++) if (words[i] === '-C' || words[i] === '-c') i++;
+    const sub = words[i] === 'worktree' && words[i + 1] === 'add' ? 'worktree' : words[i];
+    const flag = { commit: /^-[A-Za-z]*m$|^--message$/, worktree: /^-[bB]$/, checkout: /^-[bB]$/, switch: /^-[cC]$|^--create$/ }[sub];
+    if (!flag) continue;
+    for (let j = i + 1; j < words.length; j++) {
       const w = words[j];
       if (typeof w !== 'string') continue;
-      // 带值的选项：它的值不再当选项看（--body '--title=任务 99' 里的不是标题，PR review）
-      const eq = w.indexOf('=');
-      const flag = w.startsWith('--') && eq > 0 ? w.slice(0, eq) : w;
-      const inline = flag !== w ? w.slice(eq + 1) : undefined;
-      if (!WITH_VALUE.has(flag)) continue;
-      const value = inline ?? words[++j];
-      if (flag === '--title' || flag === '-t') { if (typeof value === 'string') titles.push(value); }
-      else if (flag === '--base' || flag === '-B') base = typeof value === 'string' ? value : null;
+      const inline = sub === 'commit' && w.startsWith('--message=') ? w.slice('--message='.length) : undefined;
+      if (inline === undefined && !flag.test(w)) continue;
+      const v = inline ?? words[j + 1];
+      const t = sub !== 'commit' ? v : typeof v === 'string' ? subject(v) : v && subject(ownHeredoc(text, v, bodies) ?? '');
+      if (typeof t === 'string' && t) out.push({ text: t, branch: sub !== 'commit' });
+      break; // 只取第一处：第二个 -m 是提交正文
     }
-    out.push(...titles.map((title) => ({ title, base })));
   }
   return out;
+}
+
+// 读不出字面值的词里写着 heredoc 时，取它自己那段正文：stripHeredocs 按 opener 出现的顺序收正文，词前面有几个 opener 就是第几段。
+// 词里没有 opener（变量、普通命令替换）→ null
+function ownHeredoc(text, word, bodies) {
+  if (heredocOpeners(word.text).next().done) return null;
+  return bodies[[...heredocOpeners(text.slice(0, word.at))].length] ?? null;
 }
 
 // gh pr create / edit 里带值的选项（gh 2.x）：分词时跳过它们的值
@@ -108,14 +156,15 @@ const WITH_VALUE = new Set([
 // 同一行可以有好几个）按顺序各吃掉自己的正文与结束行；heredoc 常写在 --body "$(cat <<'EOF' …)" 里，不管在不在引号里一律按行去掉。
 // 分隔符读不出（含 $、反斜杠、紧跟引号等）或找不到结束行时返回 null：分不清正文与命令，调用方放行（PR review）。
 // `<<<` 是 here-string，不算。引号里或算术里出现的 `<<` 也会被当成 opener，最坏只是放行，不会误拦。
-function stripHeredocs(s) {
+// bodies 给了就按出现顺序收下各段正文（commandTexts 取 heredoc 写的提交信息）。
+function stripHeredocs(s, bodies = null) {
   const lines = s.split('\n');
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     out.push(line);
     const pending = [];
-    for (const m of line.matchAll(/(?<!<)<<(?!<)(-?)[ \t]*(?:'([^']*)'|"([^"]*)"|([^\s;&|<>()'"`$\\]+))?/g)) {
+    for (const m of heredocOpeners(line)) {
       const delim = m[2] ?? m[3] ?? m[4];
       const next = line[m.index + m[0].length];
       if (!delim || (next !== undefined && !/[\s;&|<>()]/.test(next))) return null;
@@ -125,13 +174,17 @@ function stripHeredocs(s) {
       let k = i + 1;
       while (k < lines.length && (h.tabs ? lines[k].replace(/^\t+/, '') : lines[k]) !== h.delim) k++;
       if (k >= lines.length) return null;
+      bodies?.push(lines.slice(i + 1, k).join('\n'));
       i = k;
     }
   }
   return out.join('\n');
 }
 
-// 极简 shell 分词：按控制符切成多条命令，每条是词的数组；读不出字面值的词（含 $、`）记成 null。
+const heredocOpeners = (s) => s.matchAll(/(?<!<)<<(?!<)(-?)[ \t]*(?:'([^']*)'|"([^"]*)"|([^\s;&|<>()'"`$\\]+))?/g);
+
+// 极简 shell 分词：按控制符切成多条命令，每条是词的数组；读不出字面值的词（含 $、`）记成 { text, at }（原样文字与起点下标），
+// 调用方只认字符串，commandTexts 拿它找自己的 heredoc。
 // ponytail: 不处理 $'…'、子 shell 里的命令；这些情况的标题按读不出放行。
 function commands(s) {
   const cmds = [];
@@ -139,13 +192,15 @@ function commands(s) {
   let word = '';
   let has = false; // 当前词是否已开始（空引号 "" 也是一个词）
   let opaque = false;
+  let at = 0; // 当前词的起点
   const end = () => {
-    if (has) words.push(opaque ? null : word);
+    if (has) words.push(opaque ? { text: word, at } : word);
     word = ''; has = false; opaque = false;
   };
   const cut = () => { end(); if (words.length) cmds.push(words); words = []; };
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
+    if (!has) at = i;
     if (c === "'") {
       const j = s.indexOf("'", i + 1);
       if (j < 0) { opaque = true; has = true; break; }

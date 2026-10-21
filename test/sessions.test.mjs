@@ -10,6 +10,7 @@ import path from 'node:path';
 import { scan, resolveScanScope, defaultRecordsDir, claudeCode } from '../src/sessions/claude-code.mjs';
 import { linkSessions } from '../src/engine.mjs';
 import { parseTasksDoc } from '../src/parse.mjs';
+import { focusOf } from '../hooks/model.mjs';
 
 const tmpDir = async () => realpathSync(await mkdtemp(path.join(os.tmpdir(), 'devboard-sessions-')));
 const enc = (p) => p.replace(/[^A-Za-z0-9]/g, '-');
@@ -420,6 +421,80 @@ test('N29 扫描到引擎：同一条用户记录先点名任务、又带上 PR 
   ]);
   const last = Object.fromEntries(linkSessions([doc], [s], prs, prInfo, {}).links.map((l) => [l.taskKey.split('#')[1], l.lastAt]));
   assert.deepEqual(last, { 2: T('01:20'), 3: T('01:20'), 4: T('01:40') });
+});
+
+test('N32 command：主线与子 agent 的提交、起 PR、建分支命令里的任务号 → command 信号（子 agent 的带 lane）；没写任务号的不出信号', async () => {
+  const bash = (command) => tool('Bash', { command });
+  const { s, file } = await scanOne((repo) => [
+    human(repo, T('01:00'), '（虚构）继续'),
+    ai(repo, T('01:01'), [bash('git worktree add -b feat/m0c-x ../wt'), bash(`git -C ../wt commit -m "$(cat <<'EOF'\nfeat: devboard-mvp#3 甲\nEOF\n)"`)]),
+    ai(repo, T('01:02'), [bash('git commit -m "（虚构）补测试"'), bash('gh pr create --title "fix: 任务 4" --body x')]),
+  ], {
+    'subagents/agent-a.jsonl': (repo) => [ai(repo, T('01:03'), [bash('git commit -m "fix: 任务 5"')], { isSidechain: true })],
+  }, { 'subagents/agent-a.meta.json': '{"toolUseId":"toolu_a"}' });
+  assert.deepEqual(s.signals.filter((x) => x.kind === 'command').map((x) => [x.at, x.file === file, x.lane ?? null, x.snippet, strip(x).refs]), [
+    [T('01:01'), true, null, 'feat/m0c-x', { keys: [], nums: [], codes: ['M0-c'], docIds: [] }],
+    [T('01:01'), true, null, 'feat: devboard-mvp#3 甲', { keys: ['devboard-mvp#3'], nums: [], codes: [], docIds: ['devboard-mvp'] }],
+    [T('01:02'), true, null, 'fix: 任务 4', { keys: [], nums: ['4'], codes: [], docIds: [] }],
+    [T('01:03'), false, 'toolu_a', 'fix: 任务 5', { keys: [], nums: ['5'], codes: [], docIds: [] }],
+  ]);
+});
+
+test('N32 扫描到引擎：AI 提交写了任务号就接管主线焦点；早先点名的任务不再续活动，evidenceAt 记最近一次直接证据', async () => {
+  const doc = { docId: 'devboard-mvp', path: '.claude/specs/devboard-mvp/tasks.md', archived: false,
+    ...parseTasksDoc('- [ ] 2 甲\n- [ ] 3 乙\n', 'devboard-mvp') };
+  const { s } = await scanOne((repo) => [
+    human(repo, T('01:00'), '做 devboard-mvp 的任务 2'),
+    ai(repo, T('01:30'), [tool('Bash', { command: 'git commit -m "feat: devboard-mvp#3 乙"' })]),
+    ai(repo, T('02:00'), [text('（虚构）继续')]),
+    ai(repo, T('02:10'), [tool('Bash', { command: 'git commit -m "fix: other-repo 的任务 99"' })]), // 对不上：不清焦点
+    ai(repo, T('02:20'), [text('（虚构）继续')]),
+  ]);
+  const { links, conflicts } = linkSessions([doc], [s], [], new Map(), {});
+  assert.deepEqual(links.map((l) => [l.taskKey, l.lastAt, l.evidenceAt]), [
+    ['devboard-mvp#2', T('01:00'), T('01:00')],
+    ['devboard-mvp#3', T('02:20'), T('01:30')],
+  ]);
+  assert.deepEqual(links[1].evidence.map((e) => [e.kind, e.note]), [['command', 'AI 执行的命令：「feat: devboard-mvp#3 乙」']]);
+  assert.deepEqual(conflicts, [], '命令里对不上的任务号不报冲突');
+});
+
+test('N32 扫描到面板：一条命令里先提交、后起 PR，后续活动归最后那个动作的任务（PR #54 review）', async () => {
+  const doc = { docId: 'devboard-mvp', path: '.claude/specs/devboard-mvp/tasks.md', archived: false,
+    ...parseTasksDoc('- [ ] 2 甲\n- [ ] 3 乙\n', 'devboard-mvp') };
+  for (const [command, last] of [
+    ['git commit -m "fix: devboard-mvp#2 甲" && gh pr create --title "feat: devboard-mvp#3 乙" --body x', '3'],
+    ['gh pr create --title "feat: devboard-mvp#3 乙" --body x && git commit -m "fix: devboard-mvp#2 甲"', '2'],
+  ]) {
+    const { s } = await scanOne((repo) => [
+      human(repo, T('01:00'), '（虚构）开始'),
+      ai(repo, T('01:30'), [tool('Bash', { command })]),
+      ai(repo, T('01:40'), [text('（虚构）继续')]),
+    ]);
+    const { links } = linkSessions([doc], [s], [], new Map(), {});
+    const lastAt = Object.fromEntries(links.map((l) => [l.taskKey.split('#')[1], l.lastAt]));
+    assert.equal(lastAt[last], T('01:40'), command);
+    assert.equal(lastAt[last === '2' ? '3' : '2'], T('01:30'), command);
+    const summary = { docs: [{ ...doc, tasks: doc.tasks.map((t) => ({ ...t, docId: 'devboard-mvp' })) }],
+      tasks: links.map((l) => ({ key: l.taskKey, status: 'in_progress', sessions: [{ ...l, activity: 'running' }] })) };
+    assert.equal(focusOf(summary, s.id).keys[0], `devboard-mvp#${last}`, command);
+  }
+});
+
+test('N32 扫描到面板：读不出的提交信息不拿后面 cat 的 heredoc 当证据，焦点不变（yuiboard PR #10 review）', async () => {
+  const doc = { docId: 'devboard-mvp', path: '.claude/specs/devboard-mvp/tasks.md', archived: false,
+    ...parseTasksDoc('- [ ] 2 甲\n- [ ] 3 乙\n', 'devboard-mvp') };
+  for (const msg of ['"$MSG"', '"$(git log -1 --format=%s)"']) {
+    const command = `git commit -m ${msg}; cat <<'EOF'\nfeat: devboard-mvp#3 乙\nEOF`;
+    const { s } = await scanOne((repo) => [
+      human(repo, T('01:00'), '做 devboard-mvp 的任务 2'),
+      ai(repo, T('01:30'), [tool('Bash', { command })]),
+      ai(repo, T('01:40'), [text('（虚构）继续')]),
+    ]);
+    assert.deepEqual(s.signals.filter((g) => g.kind === 'command'), [], msg);
+    const { links } = linkSessions([doc], [s], [], new Map(), {});
+    assert.deepEqual(links.map((l) => [l.taskKey, l.lastAt]), [['devboard-mvp#2', T('01:40')]], msg);
+  }
 });
 
 test('touch：Edit / Write 路径与 Bash 命令里的规划文档目录；整词匹配、每份文档只记第一次', async () => {

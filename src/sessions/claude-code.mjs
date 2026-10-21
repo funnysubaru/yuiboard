@@ -1,16 +1,17 @@
 // Claude Code 会话来源（design §3.7）：定位记录目录、判定会话是否属于本项目、按字节偏移增量读。
 // 只读：只用 readdir / stat / 只读打开，不写、不加锁、不在会话目录里建文件（需求 16.6）。
 // 产出会话的元数据（文件、cwd、首末时间、标题、坏行数）与证据信号（design §3.7.4：prompt / dispatch / edit / touch /
-// pr-link / branch / agent，子 agent 的信号带 lane）。只存元数据与遮蔽后的短片段，缓存与 SessionRecord 都不含对话正文（需求 14.6、16.6）。
+// pr-link / branch / agent / command，子 agent 的信号带 lane）。只存元数据与遮蔽后的短片段，缓存与 SessionRecord 都不含对话正文（需求 14.6、16.6）。
 import { readdir, stat, open, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { listWorktrees, parseTasksDoc } from '../docs.mjs';
-import { extractRefs } from '../refs.mjs';
+import { extractRefs, extractBranchRefs } from '../refs.mjs';
+import { commandTexts } from '../guard.mjs';
 import { mask } from '../mask.mjs';
 import { msg } from '../msg.mjs';
 
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5; // 5：N32 新增 command 信号
 const TITLE_MAX = 60;
 const SNIPPET_MAX = 60; // 信号片段
 const SUMMARY_MAX = 120; // 最后一条消息摘要（design §3.7.4）
@@ -352,6 +353,13 @@ function toolSignals(state, { id, name, input }, pos, refOpts, anchors) {
   }
   const target = name === 'Bash' ? input.command : ['Edit', 'MultiEdit', 'Write'].includes(name) ? input.file_path : null;
   if (typeof target !== 'string') return;
+  // N32：AI（含子 agent）提交、起 PR、建分支时写下的任务号是它实际在做什么的直接证据；AI 回复里的文字照旧不算
+  if (name === 'Bash') {
+    for (const { text, branch } of commandTexts(target)) {
+      const refs = branch ? extractBranchRefs(text, refOpts) : extractRefs(text, refOpts);
+      if (refs.keys.length || refs.nums.length || refs.codes.length) addSignal(state, { kind: 'command', ...pos, refs, snippet: clip(mask(text), SNIPPET_MAX) });
+    }
+  }
   const t = target.replace(/\\/g, '/').normalize('NFC');
   for (const a of anchors) {
     if (!a.re.test(t)) continue;

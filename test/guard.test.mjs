@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isTaskDoc, prTitles, docIssues, titleIssues, applyEdit } from '../src/guard.mjs';
+import { isTaskDoc, prTitles, commandTexts, docIssues, titleIssues, applyEdit } from '../src/guard.mjs';
 import { parseTasksDoc, parseAdrDoc } from '../src/parse.mjs';
 import { conventionBrief } from '../hooks/model.mjs';
 import { setLang } from '../web/i18n.mjs';
@@ -72,6 +72,27 @@ test('prTitles：只取 gh pr create / edit 的字面标题，读不出的不返
   assert.deepEqual(titlesOf(`gh pr view 12 --json title`), []);
   assert.deepEqual(titlesOf(`echo gh pr create --title "a"; gh pr edit 3 --title "b"`), ['b'], 'echo 后面的不算');
   assert.deepEqual(titlesOf(`gh issue create --title "任务 1"`), []);
+});
+test('commandTexts：提交标题（含 heredoc）、PR 标题、新建分支名；读不出的不返回（N32）', () => {
+  const texts = (c) => commandTexts(c).map((x) => `${x.branch ? 'b' : 't'}:${x.text}`);
+  assert.deepEqual(texts(`git -C /w/x commit -qm "feat: N31 面板" -m "正文 N9"`), ['t:feat: N31 面板'], '-C 带值；第二个 -m 是正文');
+  assert.deepEqual(texts(`git add -A && git commit -m "$(cat <<'EOF'\nfeat: N32 焦点\n\n正文 N9\nEOF\n)" && git push`), ['t:feat: N32 焦点'], 'heredoc 取正文第一行');
+  assert.deepEqual(texts(`git commit --message="fix: 任务 3"`), ['t:fix: 任务 3']);
+  assert.deepEqual(texts(`git -c user.name=x commit -am 'fix: 任务 4'`), ['t:fix: 任务 4']);
+  assert.deepEqual(texts(`git commit -m "$MSG"`), [], '变量');
+  assert.deepEqual(texts(`git commit -F msg.txt`), []);
+  assert.deepEqual(texts(`echo git commit -m "N1"; git log -m`), [], 'echo 后面、别的子命令都不算');
+  assert.deepEqual(texts(`git worktree add -q -b feat/n32-x ../wt && cd ../wt`), ['b:feat/n32-x']);
+  assert.deepEqual(texts(`git switch -c fix/n4; git checkout -B task-3.2; git checkout main`), ['b:fix/n4', 'b:task-3.2']);
+  assert.deepEqual(texts(`gh pr create --draft --title "feat: N32 焦点" --body "$(cat <<'EOF'\n任务 9\nEOF\n)"`), ['t:feat: N32 焦点']);
+  assert.deepEqual(texts(`git commit -m "$(cat <<'EOF'\nfeat: x\n`), [], 'heredoc 没有结束行');
+  // 读不出的提交信息不拿别的命令的 heredoc 充数（yuiboard PR #10 review）；前面另有 heredoc 时取它自己那段
+  assert.deepEqual(texts(`git commit -m "$MSG"; cat <<'EOF'\nfeat: alpha#2\nEOF`), [], '变量');
+  assert.deepEqual(texts(`git commit -m "$(git log -1 --format=%s)"; cat <<'EOF'\nfeat: alpha#2\nEOF`), [], '不含 heredoc 的命令替换');
+  assert.deepEqual(texts(`cat <<'A'\nalpha#9\nA\ngit commit -m "$(cat <<'EOF'\nfeat: alpha#3\nEOF\n)"`), ['t:feat: alpha#3'], '前面另有 heredoc');
+  // 按命令先后输出（PR #54 review）：扫描器对同一时刻的信号只给最后一条续活动
+  assert.deepEqual(texts(`git commit -m "fix: alpha#1" && gh pr create --title "feat: alpha#2" --body x`), ['t:fix: alpha#1', 't:feat: alpha#2']);
+  assert.deepEqual(texts(`gh pr edit 3 --title "feat: alpha#2" && git commit -m "fix: alpha#1"`), ['t:feat: alpha#2', 't:fix: alpha#1']);
 });
 test('prTitles：取同一条命令里的 --base / -B', () => {
   assert.deepEqual(prTitles(`gh pr create -B v2 -t "任务 1"`), [{ title: '任务 1', base: 'v2' }]);
