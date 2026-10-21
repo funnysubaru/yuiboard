@@ -30,6 +30,7 @@ export async function gitRead(ws, args, { raw = false } = {}) {
   const run = () => runGit('git', ['-C', ws, '-c', 'core.quotepath=false', ...args], {
     timeout: GIT_TIMEOUT,
     env: gitEnv(),
+    windowsHide: true,
     ...(raw ? { maxBuffer: 64 * 1024 * 1024 } : {}),
   });
   const started = performance.now();
