@@ -1105,7 +1105,7 @@ export function renderNext(board, state) {
 }
 
 // 长列表只列前 8 个，其余写「等 N 个」（依赖范围展开到叶子后可能有几十个）
-function shortList(items, sep = t('、')) {
+export function shortList(items, sep = t('、')) {
   return items.length > 8 ? t`${items.slice(0, 8).join(sep)} 等 ${items.length} 个` : items.join(sep);
 }
 
@@ -1166,7 +1166,7 @@ export function prKind(p) {
   return 'closed';
 }
 
-const lineName = (lines, id) => lines.find((l) => l.id === id)?.name ?? t('未归类分支线');
+export const lineName = (lines, id) => lines.find((l) => l.id === id)?.name ?? t('未归类分支线');
 
 /**
  * 文档属于哪条分支线：先按 docFilter（与 engine 给 PR 挑候选文档的口径一致），再看文档是否从某分支线的独立工作区读出；都不中为 null。
@@ -1179,9 +1179,9 @@ export function docLine(doc, lines) {
 
 // 本地时间 MM-DD / MM-DD HH:mm（时间线、横幅、卡片说明）；绝对时间放悬停提示
 const two = (n) => String(n).padStart(2, '0');
-const day = (iso) => { const d = new Date(iso); return `${two(d.getMonth() + 1)}-${two(d.getDate())}`; };
+export const day = (iso) => { const d = new Date(iso); return `${two(d.getMonth() + 1)}-${two(d.getDate())}`; };
 const clock = (iso) => { const d = new Date(iso); return `${day(iso)} ${two(d.getHours())}:${two(d.getMinutes())}`; };
-function waited(ms) {
+export function waited(ms) {
   const m = Math.max(0, Math.floor(ms / 6e4));
   return m < 60 ? t`${m} 分钟` : m < 1440 ? t`${Math.floor(m / 60)} 小时` : t`${Math.floor(m / 1440)} 天`;
 }

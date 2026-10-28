@@ -390,6 +390,40 @@ for (const surface of SURFACES) {
     await ui.unmount()
   })
 
+  test(`[${surface}] PR 视图（N33）：导航计数、分组折叠、编号链到 GitHub、第二行灰字；聚焦卡片写主任务的 PR`, async ($, on) => {
+    const gh = (n: number) => `https://github.com/acme/one/pull/${n}`
+    const s = summary({ 'a#1': RUN('S1') })
+    s.prs = [
+      { number: 7, title: 'feat: a', branchLine: null, tasks: ['a#1'], state: 'OPEN', isDraft: true, url: gh(7), createdAt: '2026-10-10T00:00:00Z', readyAt: null, mergedAt: null, localSync: null },
+      { number: 8, title: 'fix: b', branchLine: null, tasks: [], state: 'OPEN', isDraft: false, url: gh(8), createdAt: '2026-10-10T00:00:00Z', readyAt: '2026-10-10T01:00:00Z', mergedAt: null, localSync: null },
+    ] as never[]
+    ;(s.tasks.find(v => v.key === 'a#1')!.prs as unknown[]) = [{ pr: 7 }]
+    const w = world(on, { p1: s })
+    await start($, w)
+    const ui = await mount($, w, surface)
+    expect(await text(ui, 'nav:pr')).toContain('\u25D1 1')
+    expect(await text(ui, 'nav:pr')).toContain('\u25D5 1')
+    // 聚焦卡片：状态原因下面一行 PR，编号链到 GitHub
+    const fp = walk(await ui.find({ type: 'Box', key: 'focus:a#1:pr:7' }))
+    expect(fp.filter(n => n.type === 'Link').map(n => [n.props.label, n.props.href])).toEqual([['#7', gh(7)]])
+    expect(await text(ui, 'focus:a#1:pr:7')).toContain('draft')
+
+    await ui.press({ key: 'go:pr' })
+    expect(get(w, 'view')).toBe('pr')
+    await ui.redraw()
+    const k = await keys(ui)
+    expect(k).toEqual(expect.arrayContaining(['pr:review', 'pr:#7', 'pr:#7:info', 'pr:merge', 'pr:#8', 'pr:#8:info']))
+    expect(k).not.toContain('stat:progress')
+    expect(walk(await ui.find({ type: 'Box', key: 'pr:#8' })).filter(n => n.type === 'Link').map(n => [n.props.label, n.props.href])).toEqual([['#8', gh(8)]])
+    expect(await text(ui, 'pr:#8:info')).toContain('未关联任务')
+    expect((await ui.find({ type: 'Link', text: /在浏览器打开/ }))?.props.href).toBe(`${WEB}/#/next?project=p1`)
+    await ui.press({ key: 'pr:review' })
+    expect(get(w, 'toggled')).toEqual(['pr:review'])
+    await ui.redraw()
+    expect(await keys(ui)).not.toContain('pr:#7')
+    await ui.unmount()
+  })
+
   test(`[${surface}] 诊断：有问题的行用警告色`, async ($, on) => {
     const w = world(on, { p1: summary({ 'a#1': RUN('S1') }, { configWarnings: ['bad field'] }) })
     await start($, w)

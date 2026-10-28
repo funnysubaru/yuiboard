@@ -223,7 +223,7 @@ function build(specs, extra = {}) {
 }
 // alpha：0.1 无分组；g1 里 1 → 1.2 → 1.2.3 三级父子；g2 里 2 已作废。beta 无分组。plan 规划中（无任务）。old 已归档。
 const MINI_LINES = [{ id: 'main', name: '主线', docFilter: '^(?!beta)' }, { id: 'side', name: '支线', docFilter: '^beta' }];
-const MINI = build([
+const MINI_SPEC = [
   { docId: 'alpha', groups: [{ id: 'g1', title: '阶段 1' }, { id: 'g2', title: '阶段 2' }], tasks: [
     { number: '0.1', status: 'done' }, { number: '1', groupId: 'g1', status: 'in_progress' },
     { number: '1.2', groupId: 'g1', parent: '1', status: 'in_progress', rule: '8.2-4', inProgressBy: ['session'], unmet: ['alpha#0.1', 'beta#1'], next: 'blocked' },
@@ -231,7 +231,8 @@ const MINI = build([
   { docId: 'beta', tasks: [{ number: '1' }, { number: '2' }] },
   { docId: 'plan', tasks: [] },
   { docId: 'old', archived: true, tasks: [{ number: '1' }] },
-]);
+];
+const MINI = build(MINI_SPEC);
 const miniPane = (over = {}) => paneOf({ summary: MINI, projects: { errors: [], warnings: [], projects: [{ id: 'mini', name: 'Mini', branchLines: MINI_LINES, errors: [] }] },
   projectId: 'mini', view: 'overview', toggled: [], focus: { keys: ['alpha#1.2'], recent: false }, url: URL0, now: NOW_MS, problems: [], ...over });
 
@@ -243,7 +244,7 @@ test('paneOf 总览：顶栏、数字与 overallStats 一致，需要确认计�
   const self = paneOf({ summary: FX, projects: projectsOf('widget', { name: 'YUIBoard' }), projectId: 'widget', view: 'overview', toggled: [], focus: null, url: URL0, now: NOW_MS, problems: [] });
   assert.deepEqual(row(self, 'title').texts, ['YUIBoard']);
   assert.deepEqual(p.header.filter((r) => r.kind === 'nav').map((r) => [r.view, r.active, r.texts[0]]),
-    [['overview', true, '总览'], ['check', false, '需要确认'], ['diag', false, '诊断']]);
+    [['overview', true, '总览'], ['pr', false, 'PR'], ['check', false, '需要确认'], ['diag', false, '诊断']]);
   assert.equal(row(p, 'nav:check').texts[1], String(checkItems(FX, { line: null }).length));
   assert.ok(checkItems(FX, { line: null }).some((c) => c.type === 'c'), '夹具里要有 c，计数才验证得了含 c');
   assert.equal(row(p, 'open').href, `${URL0}/#/overview?project=widget`);
@@ -498,7 +499,10 @@ test('paneOf 三语：setLang(en) 后视图名、状态、服务端句子都是�
   setLang('en');
   try {
     const p = pane(FX, { focus: focusOf(FX, 's-run') });
-    assert.deepEqual(p.header.filter((r) => r.kind === 'nav').map((r) => r.texts[0]), ['Overview', 'Needs attention', 'Diagnostics']);
+    assert.deepEqual(p.header.filter((r) => r.kind === 'nav').map((r) => r.texts[0]), ['Overview', 'PR', 'Needs attention', 'Diagnostics']);
+    const prs = paneOf({ summary: PRS, projects: miniProjects(), projectId: 'mini', view: 'pr', toggled: ['pr:done'], focus: null, url: URL0, now: NOW_MS, problems: [] });
+    assert.deepEqual([row(prs, 'pr:review').texts[0], row(prs, 'pr:#10').texts[0], row(prs, 'pr:#10:info').texts[0], row(prs, 'pr:done').texts[0]],
+      ['Awaiting review', '◑ Awaiting review', '主线 · 1.2, 1 · draft 2h', 'Done (last 7 days)']);
     assert.equal(row(p, 'focus').texts[0], 'This session is working on · collab-m0-space-run');
     assert.deepEqual(row(p, 'stat:ready').texts, ['Ready to start', String(overallStats(FX).ready)]);
     const c = pane(FX, { view: 'check' });
@@ -512,6 +516,87 @@ test('paneOf 三语：setLang(en) 后视图名、状态、服务端句子都是�
   } finally {
     setLang('zh');
   }
+});
+
+// ---------- PR 视图与聚焦卡片的 PR（N33，owner 已定 21） ----------
+
+const H = 36e5;
+const at = (ms) => new Date(NOW_MS - ms).toISOString();
+const pr = (number, state, over = {}) => ({ number, title: `PR ${number}`, branchLine: 'main', tasks: [], state, isDraft: false,
+  url: `https://github.com/acme/mini/pull/${number}`, createdAt: at(30 * 24 * H), readyAt: null, mergedAt: null, localSync: null, ...over });
+// 10 draft；11 ready（支线）；12 已合并待同步（主线，比 11 等得短仍排前：先按分支线）；13–17 近 7 天合并；18 超出 7 天；19 关闭未合并
+const PRS = build(MINI_SPEC, { freshness: { github: {} }, recentClosedPrDays: 7, prs: [
+  pr(10, 'OPEN', { isDraft: true, createdAt: at(2 * H), tasks: ['alpha#1.2', 'alpha#1'] }),
+  pr(11, 'OPEN', { branchLine: 'side', createdAt: at(72 * H), readyAt: at(H / 4) }),
+  pr(12, 'MERGED', { mergedAt: at(3 * H), localSync: 'pending', tasks: ['beta#1'] }),
+  ...[13, 14, 15, 16, 17].map((n, i) => pr(n, 'MERGED', { mergedAt: at((i + 1) * 24 * H), localSync: 'synced', tasks: ['alpha#0.1'] })),
+  pr(18, 'MERGED', { mergedAt: at(20 * 24 * H), localSync: 'synced' }),
+  pr(19, 'CLOSED'),
+] });
+PRS.tasks.find((v) => v.key === 'alpha#1.2').prs = [{ pr: 13 }, { pr: 19 }, { pr: 12 }, { pr: 10 }, { pr: 14, removedManually: true }];
+const miniProjects = (lines = MINI_LINES) => ({ errors: [], warnings: [], projects: [{ id: 'mini', name: 'Mini', branchLines: lines, errors: [] }] });
+const prPane = (over = {}) => paneOf({ summary: PRS, projects: miniProjects(), projectId: 'mini', view: 'pr', toggled: [],
+  focus: { keys: ['alpha#1.2'], recent: false }, url: URL0, now: NOW_MS, problems: [], ...over });
+
+test('paneOf PR 视图：导航在总览后，数字只算等待 review 与等待合并（含待同步）；分组、顺序、两行内容', () => {
+  const p = prPane();
+  assert.deepEqual(p.header.filter((r) => r.kind === 'nav').map((r) => r.view), ['overview', 'pr', 'check', 'diag']);
+  assert.deepEqual([row(p, 'nav:pr').active, row(p, 'nav:pr').texts, row(p, 'nav:pr').tones], [true, ['PR', '◑ 1', '◕ 2'], [null, 'merged', 'planMode']]);
+  assert.equal(row(p, 'open').href, `${URL0}/#/next?project=mini`, '网页没有 PR 视图，去下一步（等我处理）');
+  assert.equal(row(p, 'stat:ready'), undefined, '数字只在总览');
+  assert.deepEqual(keys(p.body), ['pr:review', 'pr:#10', 'pr:#10:info', 'pr:merge', 'pr:#12', 'pr:#12:info', 'pr:#11', 'pr:#11:info', 'pr:done']);
+  assert.deepEqual([row(p, 'pr:review').texts, row(p, 'pr:review').end, row(p, 'pr:review').open], [['等待 review'], '1', true]);
+  assert.deepEqual([row(p, 'pr:merge').end, row(p, 'pr:done').texts, row(p, 'pr:done').end, row(p, 'pr:done').open], ['2', ['完成（最近 7 天）'], '5', false]);
+  const r10 = row(p, 'pr:#10');
+  assert.deepEqual([r10.kind, r10.status, r10.tone, r10.href, r10.texts],
+    ['prItem', 'in_review', 'review', 'https://github.com/acme/mini/pull/10', ['◑ 等待 review', '#10', 'PR 10']]);
+  assert.deepEqual([row(p, 'pr:#10:info').texts, row(p, 'pr:#10:info').band, row(p, 'pr:#10:info').sep], [['主线 · 1.2、1 · draft 2 小时'], 'review', true]);
+  assert.deepEqual([row(p, 'pr:#12').tone, row(p, 'pr:#12').texts[0], row(p, 'pr:#12:info').texts], ['sync', '◕ 待同步', ['主线 · 1 · 已合并 3 小时，本地还没 pull']]);
+  assert.deepEqual([row(p, 'pr:#11').tone, row(p, 'pr:#11').gap, row(p, 'pr:#11:info').texts], ['merge', true, ['支线 · 未关联任务 · ready 15 分钟']]);
+  // 只有一条分支线不写分支线名
+  const one = prPane({ projects: miniProjects([MINI_LINES[0]]) });
+  assert.deepEqual(row(one, 'pr:#10:info').texts, ['1.2、1 · draft 2 小时']);
+});
+
+test('paneOf PR 视图：完成默认收起，展开按合并时间从新到旧最多 3 个，其余一行跳 GitHub；超出天数、关闭未合并的不列', () => {
+  const p = prPane({ toggled: ['pr:done', 'pr:review'] });
+  assert.equal(row(p, 'pr:review').open, false);
+  assert.equal(row(p, 'pr:#10'), undefined);
+  const done = keys(p.body).slice(keys(p.body).indexOf('pr:done'));
+  assert.deepEqual(done, ['pr:done', 'pr:#13', 'pr:#13:info', 'pr:#14', 'pr:#14:info', 'pr:#15', 'pr:#15:info', 'pr:done:more']);
+  assert.deepEqual([row(p, 'pr:#13').status, row(p, 'pr:#13').texts[0]], ['done', '● 完成']);
+  assert.match(row(p, 'pr:#13:info').texts[0], /^主线 · 0\.1 · 合并于 \d\d-\d\d$/);
+  assert.deepEqual([row(p, 'pr:done:more').kind, row(p, 'pr:done:more').texts, row(p, 'pr:done:more').href],
+    ['more', ['另有 2 个 · 在浏览器里看全部'], 'https://github.com/acme/mini/pulls?q=is%3Apr+is%3Amerged']);
+  for (const n of [18, 19]) assert.equal(row(p, `pr:#${n}`), undefined, String(n));
+  // recentClosedPrDays 缺省同网页 14 天：#18（20 天前）仍不列
+  assert.equal(row(prPane({ summary: { ...PRS, recentClosedPrDays: undefined }, toggled: ['pr:done'] }), 'pr:done').end, '5');
+  // 没有可列的 PR；没读到 GitHub
+  assert.deepEqual(prPane({ summary: { ...PRS, prs: [] } }).body.map((r) => r.texts[0]), ['没有等待处理或最近合并的 PR']);
+  assert.deepEqual(row(prPane({ summary: { ...PRS, prs: [] } }), 'nav:pr').texts, ['PR']);
+  assert.deepEqual(prPane({ summary: { ...PRS, degraded: { ...PRS.degraded, noPrData: true } } }).body.map((r) => r.key), ['pr:empty']);
+});
+
+test('paneOf PR 视图：未接 GitHub 的项目不显示导航，选着 PR 视图也按总览画', () => {
+  const p = prPane({ summary: { ...PRS, freshness: { github: { state: 'off' } } } });
+  assert.equal(row(p, 'nav:pr'), undefined);
+  assert.equal(row(p, 'nav:overview').active, true);
+  assert.ok(row(p, 'stat:ready') && row(p, 'doc:alpha'));
+  // 还没拿到摘要：也不出 PR 导航
+  assert.equal(row(prPane({ summary: null }), 'nav:pr'), undefined);
+});
+
+test('paneOf 聚焦卡片：状态原因下面写主任务的关联 PR，等着的在前、最多 2 个；手动解除、关闭未合并的不列；没有不写', () => {
+  const p = prPane({ view: 'overview' });
+  assert.deepEqual(keys(p.focus), ['focus', 'focus:alpha#1.2', 'focus:alpha#1.2:why', 'focus:alpha#1.2:pr:10', 'focus:alpha#1.2:pr:12']);
+  const r = row(p, 'focus:alpha#1.2:pr:10');
+  assert.deepEqual([r.kind, r.status, r.tone, r.href, r.texts],
+    ['focusPr', 'in_review', 'review', 'https://github.com/acme/mini/pull/10', ['#10', '◑ 等待 review', 'draft 2 小时']]);
+  assert.deepEqual(row(p, 'focus:alpha#1.2:pr:12').texts, ['#12', '◕ 待同步', '已合并 3 小时，本地还没 pull']);
+  // 只剩完成的 PR 也写
+  const s = { ...PRS, tasks: PRS.tasks.map((v) => (v.key === 'alpha#1.2' ? { ...v, prs: [{ pr: 13 }, { pr: 19 }] } : v)) };
+  assert.deepEqual(prPane({ summary: s, view: 'overview' }).focus.filter((x) => x.kind === 'focusPr').map((x) => x.texts[1]), ['● 完成']);
+  assert.equal(prPane({ view: 'overview', focus: { keys: ['alpha#1'], recent: false } }).focus.filter((x) => x.kind === 'focusPr').length, 0);
 });
 
 // ---------- 文字预算（任务 2.2；design §4.2） ----------

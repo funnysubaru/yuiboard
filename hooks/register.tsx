@@ -473,6 +473,17 @@ export const register: Register = (on, options) => {
           </Box>
         )
       }
+      // 聚焦卡片里主任务的 PR：编号（链接到 GitHub）、状态圆圈与文字、等了多久
+      if (row.kind === 'focusPr') {
+        return (
+          <Box key={row.key} flexDirection="row" columnGap={1} paddingLeft={pad}>
+            {href !== undefined ? <Link href={href} label={row.texts[0]!} /> : <Text dimColor>{row.texts[0]}</Text>}
+            <Text color={row.tone !== undefined ? FG[row.tone] : undefined}>{row.texts[1]}</Text>
+            {sep(1)}
+            <Box flexShrink={1} flexGrow={1}><Text dimColor wrap="truncate-end">{row.texts[2]}</Text></Box>
+          </Box>
+        )
+      }
       if (row.kind === 'diag' && row.level > 0) {
         return (
           <Box key={row.key} paddingLeft={pad + 2 + labelWidth}>
@@ -514,7 +525,7 @@ export const register: Register = (on, options) => {
             </Box>
           )
         }
-        return <Text color={tone(row, i)} dimColor={dim || tone(row, i) === 'subtle'} bold={row.kind === 'checkGroup'}>{s}</Text>
+        return <Text color={tone(row, i)} dimColor={dim || tone(row, i) === 'subtle'} bold={GROUP.has(row.kind)}>{s}</Text>
       })
       const lastTone = tone(row, row.texts.length - 1) ?? (row.warn ? 'warning' : undefined)
       // 已完成的标题转灰，作废的加删除线
@@ -533,7 +544,7 @@ export const register: Register = (on, options) => {
           {parts}
           <Box flexShrink={1} flexGrow={1}>
             <Text wrap={WRAP.has(row.kind) ? 'wrap' : 'truncate-end'} color={lastTone} dimColor={dim || faded || lastTone === 'subtle'}
-              strikethrough={t === 'void'} bold={row.kind === 'checkGroup' || row.highlight === true}>{last}</Text>
+              strikethrough={t === 'void'} bold={GROUP.has(row.kind) || row.highlight === true}>{last}</Text>
           </Box>
           {row.end !== undefined && <Text color={row.endTone} dimColor={row.endTone === undefined}>{row.end}</Text>}
           {link}
@@ -546,7 +557,7 @@ export const register: Register = (on, options) => {
       return (
         <Box key={row.key} flexDirection="row" columnGap={1}>
           <Button key={`go:${v}`} label={row.texts[0]!} plain variant={row.active ? 'primary' : undefined} dimColor={!row.active} onPress={() => void $.state.set(VIEW, v)} />
-          {row.texts[1] !== undefined && <Text color={tone(row, 1)}>{row.texts[1]}</Text>}
+          {row.texts.slice(1).map((s, i) => <Text color={tone(row, i + 1)}>{s}</Text>)}
         </Box>
       )
     }
@@ -651,10 +662,12 @@ async function terminalShade($: Engine): Promise<'dark' | 'light' | null> {
 /** 块内细缝的高度（行高的几分之一）；只在桌面等远端界面用 */
 const SEP = 0.25
 /** 文字照常换行的行（任务、说明类）；其余放不下截断 */
-const WRAP = new Set(['task', 'focus', 'focusItem', 'focusLine', 'checkItem', 'empty'])
+const WRAP = new Set(['task', 'focus', 'focusItem', 'focusLine', 'checkItem', 'prItem', 'prLine', 'empty'])
 /** 文字整行画灰的行 */
-const DIM = new Set(['focusHead', 'focusLine', 'focusToggle', 'empty'])
+const DIM = new Set(['focusHead', 'focusLine', 'focusToggle', 'prLine', 'empty'])
 /** texts 为 [图标, 编号, 标题] 时编号对齐成一列的行 */
-const NUMBERED = new Set(['task', 'focus', 'focusItem', 'checkItem'])
+const NUMBERED = new Set(['task', 'focus', 'focusItem', 'checkItem', 'prItem'])
+/** 加粗的分组标题行 */
+const GROUP = new Set(['checkGroup', 'prGroup'])
 /** 终端里占的列数：中日韩全角字算两列 */
 const cols = (s: string) => [...s].reduce((n, c) => n + ((c.codePointAt(0) ?? 0) >= 0x1100 ? 2 : 1), 0)

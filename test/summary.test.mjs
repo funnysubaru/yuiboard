@@ -15,7 +15,7 @@ import { extractRefs } from '../src/refs.mjs';
 import { normalizePr } from '../src/github.mjs';
 import { summarize } from '../src/summary.mjs';
 import { startServer } from '../src/server.mjs';
-import { overallStats, checkItems, statusWhy } from '../web/app.mjs';
+import { overallStats, checkItems, statusWhy, prKind } from '../web/app.mjs';
 
 process.env.DEVBOARD_LANG = 'zh';
 process.env.FAKE_GH = '{}'; // 服务启动后后台拉 GitHub 一律走 gh 替身，不联网
@@ -64,7 +64,7 @@ function fixtureBoard() {
 
 // design §3.1 的字段表：键 = 保留的字段；值为对象的递归往下比，其余整块原样保留
 const SPEC = {
-  top: ['projectId', 'freshness', 'degraded', 'workspaces', 'diagnostics', 'defaults', 'stats', 'docs', 'tasks', 'conflicts', 'prs', 'sessions'],
+  top: ['projectId', 'freshness', 'degraded', 'workspaces', 'diagnostics', 'defaults', 'stats', 'recentClosedPrDays', 'docs', 'tasks', 'conflicts', 'prs', 'sessions'],
   doc: ['docId', 'title', 'path', 'kind', 'archived', 'workspaceId', 'sourceType', 'sourceLabel', 'parse', 'groups', 'alias', 'adr', 'tasks'],
   docTask: ['key', 'number', 'title', 'checkbox', 'void', 'docId', 'groupId', 'parentKey', 'duplicate'],
   view: ['key', 'status', 'rule', 'docOnly', 'syncPending', 'syncUnchecked', 'inProgressBy', 'activity', 'childSummary', 'next', 'prs', 'sessions', 'deps'],
@@ -72,7 +72,7 @@ const SPEC = {
   sessionLink: ['sessionId', 'activity', 'firstAt', 'lastAt', 'evidenceAt'],
   deps: ['on', 'unmet', 'external'],
   conflict: ['type', 'taskKey', 'pr', 'sessionId', 'detail', 'source'],
-  pr: ['number', 'title', 'branchLine', 'tasks'],
+  pr: ['number', 'title', 'branchLine', 'tasks', 'state', 'isDraft', 'url', 'createdAt', 'readyAt', 'mergedAt', 'localSync'],
   session: ['id', 'source', 'title'],
 };
 const NESTED = { docs: ['doc', { tasks: 'docTask' }], tasks: ['view', { prs: 'prLink', sessions: 'sessionLink', deps: 'deps' }],
@@ -114,7 +114,7 @@ test('摘要投影：只含 design §3.1 的字段，结构与值不变（Board 
     }
   }
   // 夹具确实带了要删的东西，投影不是空操作
-  for (const k of ['gantt', 'waiting', 'recent', 'recentClosedPrDays']) assert.ok(Object.hasOwn(board, k) && !Object.hasOwn(sum, k), k);
+  for (const k of ['gantt', 'waiting', 'recent']) assert.ok(Object.hasOwn(board, k) && !Object.hasOwn(sum, k), k);
   assert.ok(board.tasks.some((v) => v.prs.some((l) => 'evidence' in l)) && board.tasks.some((v) => v.sessions.length));
   const links = sum.tasks.flatMap((v) => v.sessions);
   assert.ok(links.some((l) => l.named) && links.some((l) => !l.named), '夹具里既有点到任务的会话关联，也有只靠分支 / PR 连上的');
@@ -154,6 +154,18 @@ test('摘要与完整看板跑 overallStats / checkItems / statusWhy 结果完�
     whys.add(why);
   });
   assert.ok(whys.size >= 6, `状态原因种类够多（${whys.size}）`);
+});
+
+test('摘要的 PR 分组与网页「等我处理」（engine waitingList）一致（N33）', () => {
+  const board = fixtureBoard();
+  const sum = JSON.parse(JSON.stringify(summarize(board)));
+  const KIND = { draft: 'review', ready: 'merge', unsynced: 'sync' };
+  const waiting = sum.prs.filter((p) => KIND[prKind(p)]).map((p) => [p.number, KIND[prKind(p)]]).sort((a, b) => a[0] - b[0]);
+  const want = board.waiting.filter((w) => w.kind !== 'stale').map((w) => [w.pr, w.kind]).sort((a, b) => a[0] - b[0]);
+  assert.deepEqual(waiting, want);
+  // 夹具覆盖 draft、ready、已合并待同步、已合并、关闭未合并
+  assert.deepEqual(new Set(sum.prs.map(prKind)), new Set(['draft', 'ready', 'unsynced', 'merged', 'closed']));
+  assert.equal(sum.recentClosedPrDays, 7);
 });
 
 // ---------- 路由：与 /board 同口径 ----------
