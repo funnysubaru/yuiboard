@@ -1,12 +1,12 @@
 // $.state 的类型约定（design §5.1）：只放视图、折叠、会话 id 这类小值；摘要本体放在钩子模块的变量里。
-export type View = 'overview' | 'check' | 'diag'
+export type View = 'overview' | 'pr' | 'check' | 'diag'
 
 declare module 'claude-code' {
   interface PluginState {
     yuiboard: {
       /** 当前视图 */
       view: View
-      /** 与默认相反的折叠键（doc: / grp: / task: / check: 前缀，同网页 state.toggled） */
+      /** 与默认相反的折叠键（doc: / grp: / task: / check: / pr: 前缀，前四种同网页 state.toggled） */
       toggled: string[]
       /** 手动选的项目 id */
       picked: string | null

@@ -5,6 +5,7 @@ import { t, tx, getLang } from '../web/i18n.mjs';
 import {
   STATUS_UI, CONFLICT_TEXT, RULE_TEXT, SESSION_SOURCE_TEXT, HTML_LANG,
   hashFor, refLabel, overallStats, checkItems, statusWhy, docLine, degradedBanners, docHasIssues, ago,
+  prKind, shortList, lineName, waited, day,
 } from '../web/app.mjs';
 import { mdText } from '../web/md.mjs'; // 一行显示的标题去掉 Markdown 记号，与网页悬停 / SVG 同一解析（N12）
 
@@ -116,6 +117,46 @@ const WORD = { run: t('进行中'), stale: t('停滞中'), review: t('等待 rev
   done: t('完成'), todo: t('未开始'), void: t('作废') };
 const mark = (v) => `${icon(v?.status)} ${t(WORD[toneOf(v)])}`;
 const size = (rows) => rows.reduce((n, r) => n + rowCost(r), 0);
+// 分隔（面板稿 v2，owner 2026-10-12 晚）：最外层的行（没有 band）连同它下面带 band 的行算一块。块与块之间空一行（gap），
+// 只在前后两块都铺了底色时隔开，否则底色本身就分得开，不多占行；块内各行之间一条比它窄的细缝（sep）
+const apart = (list) => list.map((r, i) => (i === 0 ? r
+  : r.band ? { ...r, sep: true }
+  : tinted(r) && tinted(list[i - 1]) ? { ...r, gap: true } : r));
+
+// ---- PR（N33，owner 已定 21） ----
+// 分组口径同网页「等我处理」（engine waitingList）：prKind → 行的色调；关闭未合并的不列
+const PR_TONE = { draft: 'review', ready: 'merge', unsynced: 'sync', merged: 'done' };
+const PR_STATUS = { review: 'in_review', merge: 'awaiting_merge', sync: 'awaiting_merge', done: 'done' };
+const PR_ORDER = ['review', 'merge', 'sync', 'done'];
+const PR_DONE_MAX = 3;
+const prMark = (tone) => `${STATUS_UI[PR_STATUS[tone]].icon} ${t(WORD[tone])}`;
+// 等了多久，起点同 waitingList：draft 看创建，ready 看转 ready，已合并看合并
+const prSince = (p, tone) => (tone === 'review' ? p.createdAt : tone === 'merge' ? p.readyAt ?? p.createdAt : p.mergedAt);
+function prWait(p, tone, now) {
+  const w = waited(now - Date.parse(prSince(p, tone)));
+  return tone === 'review' ? t`draft ${w}` : tone === 'merge' ? t`ready ${w}` : tone === 'sync' ? t`已合并 ${w}，本地还没 pull` : t`合并于 ${day(p.mergedAt)}`;
+}
+/**
+ * 摘要里的 PR 分成等待 review、等待合并（含待同步）、完成（最近 recentClosedPrDays 天合并的，默认同网页 14）。
+ * 等待的两组按分支线配置顺序、再按等得久的在前（同 waitingList）；完成按合并时间从新到旧。
+ */
+function prGroups(summary, lines, now) {
+  const days = summary.recentClosedPrDays ?? 14;
+  const groups = { review: [], merge: [], done: [] };
+  for (const p of summary.prs ?? []) {
+    const tone = PR_TONE[prKind(p)];
+    if (!tone) continue;
+    if (tone !== 'done') groups[tone === 'sync' ? 'merge' : tone].push({ p, tone });
+    else if (now - Date.parse(p.mergedAt) <= days * 864e5) groups.done.push({ p, tone });
+  }
+  const rank = (id) => { const i = lines.findIndex((l) => l.id === id); return i < 0 ? lines.length : i; };
+  const time = (x) => Date.parse(prSince(x.p, x.tone));
+  for (const k of ['review', 'merge']) groups[k].sort((a, b) => rank(a.p.branchLine) - rank(b.p.branchLine) || time(a) - time(b));
+  groups.done.sort((a, b) => time(b) - time(a));
+  return { groups, days };
+}
+// 未接 GitHub 的项目（N28）不显示 PR 视图与导航
+const hasGithub = (summary) => !!summary && summary.freshness?.github?.state !== 'off';
 
 /**
  * 一行画出来后计入引擎 100,000 字上限的字符数（design §4.2），hooks/register.tsx 照此渲染：
@@ -222,8 +263,8 @@ export const conventionRules = () => [
  * @param {object|null} input.summary   当前项目的摘要（GET /api/projects/:id/summary），还没拿到为 null
  * @param {object|null} input.projects  GET /api/projects 的响应 { errors, warnings, projects:[{ id, name, branchLines, errors, refreshError }] }
  * @param {string|null} input.projectId 认出 / 手动选的项目
- * @param {'overview'|'check'|'diag'} input.view
- * @param {string[]} input.toggled      与默认相反的折叠键（doc:<docId>、grp:<docId>/<分组>、task:<任务键>、check:<类型>）
+ * @param {'overview'|'pr'|'check'|'diag'} input.view   'pr' 在未接 GitHub 的项目（或还没拿到摘要）时按总览画
+ * @param {string[]} input.toggled      与默认相反的折叠键（doc:<docId>、grp:<docId>/<分组>、task:<任务键>、check:<类型>、pr:<review|merge|done>）
  * @param {{keys:string[], recent:boolean, idle?:boolean}|null} input.focus  focusOf 的结果
  * @param {string} input.url            服务地址，如 http://127.0.0.1:4317
  * @param {number} input.now            毫秒时间戳
@@ -241,20 +282,29 @@ export const conventionRules = () => [
  *   - toggle：点了要切换的折叠键（切换 = 在 toggled 里加 / 删）；open：当前是否展开
  *   - href：浏览器链接；warn：警告色；error：错误（诊断里服务端的错误行，画 ✕）；highlight：聚焦的主任务
  *   kind：
- *   - header：title（YUIBoard，项目名不同才跟在后面）、nav（视图按钮：view = 'overview'|'check'|'diag'，active = 当前视图；
- *     需要确认的 texts[1] 是计数，诊断的 texts[1] 是「⚠ 有问题的项数」）、link（在浏览器打开）、stat（总览数字，一行排开，只在总览）
+ *   - header：title（YUIBoard，项目名不同才跟在后面）、nav（视图按钮：view = 'overview'|'pr'|'check'|'diag'，active = 当前视图；
+ *     texts[0] 是视图名，其后各段是计数：PR 是「◑ 等待 review 数」「◕ 等待合并数」（为 0 的不出，未接 GitHub 不出整个按钮），
+ *     需要确认是计数，诊断是「⚠ 有问题的项数」）、link（在浏览器打开）、stat（总览数字，一行排开，只在总览）
  *   - banners：banner（warn；超过 5 条时第 6 行合成「另有 N 条错误，见诊断」）
  *   - focus（只在总览）：focusHead（标题行：本会话正在做 / 最近做的 / 当前没有进行中的任务 · 最近做的 · 文档 [· 多久前]）| empty（本会话还没关联到任务）、
  *     focus（主任务：图标、编号、标题，href 常显）、focusLine（状态原因 · 在等）、
+ *     focusPr（主任务的关联 PR，最多 2 个：texts = [#号, 状态圆圈与文字, 等了多久]，href = GitHub，status / tone 同 PR 行）、
  *     focusToggle（另有 N 个关联任务，toggle = 'focus:others'，默认收起）、focusItem（展开后的其余任务，一行一个）、more（另有 N 个）
  *   - body：总览 doc / group / task（href 画在编号上，owner 2026-10-12 晚）；需要确认 checkGroup / checkItem / more（另有 N 条）/ empty；
+ *     PR prGroup（等待 review / 等待合并 / 完成，end 是个数，toggle = pr:<组>）/ prItem（[状态圆圈与文字, #号, 标题]，href = GitHub）/
+ *     prLine（灰字：分支线 · 关联任务 · 等了多久，band = 上一行的 tone）/ more / empty；
  *     诊断 diag（level 0 是七项与服务端错误，texts[0] 是项名；level 1 是有问题那项的明细行）；认不出项目时 empty + pick（pick = 项目 id）；读取中 empty
  *   - more：预算放不下时的「其余 N 项在浏览器里看」（kind 'more'，带 href），否则 null
  */
-export function paneOf({ summary, projects, projectId, view, toggled = [], focus, url, now, problems = [] }) {
+export function paneOf({ summary, projects, projectId, view: wanted, toggled = [], focus, url, now, problems = [] }) {
   const entry = projects?.projects?.find((p) => p.id === projectId) ?? null;
   const base = trim(url ?? '');
-  const href = (v, key = null, f = null) => `${base}/${hashFor(v, projectId, key, null, f)}`;
+  // 网页没有 PR 视图：PR 视图的「在浏览器打开」去网页的下一步（「等我处理」在那里）
+  const href = (v, key = null, f = null) => `${base}/${hashFor(v === 'pr' ? 'next' : v, projectId, key, null, f)}`;
+  const github = hasGithub(summary);
+  // 未接 GitHub（或还没拿到摘要）时 PR 视图退回总览
+  const view = wanted === 'pr' && !github ? 'overview' : wanted;
+  const lines = entry?.branchLines ?? [];
 
   // 项目名与品牌同名（devboard 自己）只写一次
   const name = projectId ? clip(entry?.name ?? projectId, TITLE_MAX) : null;
@@ -262,8 +312,14 @@ export function paneOf({ summary, projects, projectId, view, toggled = [], focus
   if (projectId) {
     const n = summary ? checkItems(summary, { line: null }).length : null;
     const w = summary ? diagRows(summary, projects, entry, now).filter((r) => r.level === 0 && r.warn).length : 0;
+    // PR 导航的数字：等待 review、等待合并（含待同步）各一段，为 0 的不写；完成不计（owner 已定 21）
+    const pr = github ? prGroups(summary, lines, now).groups : null;
+    const prCounts = pr ? [['review', 'merged'], ['merge', 'planMode']].filter(([k]) => pr[k].length) : [];
     header.push(
       { key: 'nav:overview', kind: 'nav', level: 0, view: 'overview', active: view === 'overview', texts: [t('总览')] },
+      ...(pr ? [{ key: 'nav:pr', kind: 'nav', level: 0, view: 'pr', active: view === 'pr',
+        texts: ['PR', ...prCounts.map(([k]) => `${STATUS_UI[PR_STATUS[k]].icon} ${pr[k].length}`)],
+        ...(prCounts.length && { tones: [null, ...prCounts.map(([, c]) => c)] }) }] : []),
       { key: 'nav:check', kind: 'nav', level: 0, view: 'check', active: view === 'check', texts: n == null ? [t('需要确认')] : [t('需要确认'), String(n)], ...(n && { tones: [null, 'warning'] }) },
       { key: 'nav:diag', kind: 'nav', level: 0, view: 'diag', active: view === 'diag', texts: w ? [t('诊断'), `⚠ ${w}`] : [t('诊断')], ...(w && { tones: [null, 'warning'] }) },
     );
@@ -284,8 +340,9 @@ export function paneOf({ summary, projects, projectId, view, toggled = [], focus
   // 还没有摘要：有问题只出顶栏与横幅，否则显示读取中
   if (!summary) return fit({ header, banners, body: problems.length ? [] : [{ key: 'loading', kind: 'empty', level: 0, texts: [t('正在读取看板…')] }], href: href(view) });
 
-  const ctx = { summary, href, toggled: new Set(toggled), focus: focus ?? { keys: [], recent: false }, lines: entry?.branchLines ?? [] };
+  const ctx = { summary, href, toggled: new Set(toggled), focus: focus ?? { keys: [], recent: false }, lines };
   if (view === 'check') return fit({ header, banners, body: checkRows(ctx), href: href('check') });
+  if (view === 'pr') return fit({ header, banners, body: prRows({ ...ctx, now }), href: href('pr') });
   if (view === 'diag') return fit({ header, banners, body: diagRows(summary, projects, entry, now), href: href('diag') });
   const { focusHead, focusItems, focusToggle } = focusCard({ ...ctx, now });
   return fit({ header, banners, focusHead, focusItems, focusToggle, body: treeRows(ctx), href: href('overview') });
@@ -345,6 +402,8 @@ function focusCard({ summary, href, focus, toggled, now }) {
     { key: `focus:${first}`, kind: 'focus', level: 1, status: v.status ?? 'void', tone: toneOf(v), highlight: true, href: href('overview', first),
       texts: [mark(v), task.number, clip(mdText(task.title), TITLE_MAX)] },
     { key: `focus:${first}:why`, kind: 'focusLine', level: 2, texts: [clip(why, NOTE_MAX)] },
+    ...focusPrs(summary, v, now).map(({ p, tone }) => ({ key: `focus:${first}:pr:${p.number}`, kind: 'focusPr', level: 2,
+      status: PR_STATUS[tone], tone, ...(p.url && { href: p.url }), texts: [`#${p.number}`, prMark(tone), prWait(p, tone, now)] })),
   ] };
   const head = focus.idle ? [t('本会话当前没有进行中的任务'), t('最近做的'), task.docId, focus.at && ago(focus.at, now)].filter(Boolean)
     : focus.recent ? [t('本会话最近做的'), task.docId, focus.at && ago(focus.at, now)].filter(Boolean)
@@ -360,6 +419,14 @@ function focusCard({ summary, href, focus, toggled, now }) {
       texts: [mark(views.get(k)), x.number, clip(mdText(x.title), TITLE_MAX)] }] };
   }) : [];
   return { focusHead, focusItems: [main, ...others], focusToggle };
+}
+
+// 聚焦卡片里主任务的关联 PR（owner 已定 21 的 B）：手动解除的、关闭未合并的不列；等着的在前，同组号大（新）在前，最多 2 个
+function focusPrs(summary, v, now) {
+  const byNum = new Map((summary.prs ?? []).map((p) => [p.number, p]));
+  return (v.prs ?? []).filter((l) => !l.removedManually).map((l) => byNum.get(l.pr)).filter(Boolean)
+    .map((p) => ({ p, tone: PR_TONE[prKind(p)] })).filter((x) => x.tone)
+    .sort((a, b) => PR_ORDER.indexOf(a.tone) - PR_ORDER.indexOf(b.tone) || b.p.number - a.p.number).slice(0, 2);
 }
 
 // 任务树（需求 4.2–4.5）：文档 → 分组 → 任务，顺序同网页。文档、分组默认只展开聚焦路径；父任务同网页默认展开
@@ -400,11 +467,7 @@ function treeRows({ summary, href, toggled, focus, lines }) {
         texts: [mark(v), task.number, clip(mdText(task.title), TITLE_MAX)],
         ...(parents.has(task.key) && { toggle: tkey, open: isOpen(tkey) }), ...(task.key === primary && { highlight: true }) }];
     });
-    // 分隔（面板稿 v2，owner 2026-10-12 晚）：最外层任务（没有 band）连同它展开的子孙算一块。块与块之间空一行（gap），
-    // 只在前后两块都铺了底色时隔开，否则底色本身就分得开，不多占行；块内各行之间一条比它窄的细缝（sep）
-    const apart = (list) => list.map((r, i) => (i === 0 ? r
-      : r.band ? { ...r, sep: true }
-      : tinted(r) && tinted(list[i - 1]) ? { ...r, gap: true } : r));
+    // 分隔见 apart：最外层任务连同它展开的子孙算一块
     // 第一个分组标题之前的任务不属于任何分组，直接挂在文档下
     rows.push(...apart(taskRows(doc.tasks.filter((x) => !x.groupId), 1)));
     for (const g of doc.groups) {
@@ -418,6 +481,44 @@ function treeRows({ summary, href, toggled, focus, lines }) {
     }
   }
   return rows.length ? rows : [{ key: 'empty', kind: 'empty', level: 0, texts: [t('没有可显示的规划文档')] }];
+}
+
+// PR 视图（N33，owner 已定 21 的 A；面板稿 ui-mockup-v3-pr.html）：等待 review、等待合并默认展开，完成默认收起、展开最多 3 个。
+// 每个 PR 两行：状态圆圈与状态文字、编号（链接到 GitHub）、标题；灰字写分支线（多条时）· 关联任务 · 等了多久
+function prRows({ summary, toggled, lines, now }) {
+  if (summary.degraded?.noPrData) return [{ key: 'pr:empty', kind: 'empty', level: 0, texts: [t('未包含 PR 信息（还没成功读到 GitHub）')] }];
+  const { groups, days } = prGroups(summary, lines, now);
+  const tasks = new Map(summary.docs.flatMap((d) => d.tasks).map((x) => [x.key, x]));
+  const item = ({ p, tone }) => {
+    const docId = tasks.get(p.tasks?.[0])?.docId;
+    const info = [
+      lines.length > 1 && lineName(lines, p.branchLine),
+      p.tasks?.length ? shortList(p.tasks.map((k) => refLabel(k, docId))) : t('未关联任务'),
+      prWait(p, tone, now),
+    ].filter(Boolean).join(' · ');
+    return [
+      { key: `pr:#${p.number}`, kind: 'prItem', level: 1, status: PR_STATUS[tone], tone, ...(p.url && { href: p.url }),
+        texts: [prMark(tone), `#${p.number}`, clip(p.title, TITLE_MAX)] },
+      { key: `pr:#${p.number}:info`, kind: 'prLine', level: 2, band: tone, texts: [clip(info, NOTE_MAX)] },
+    ];
+  };
+  const rows = [];
+  for (const [g, name] of [['review', t('等待 review')], ['merge', t('等待合并')], ['done', t`完成（最近 ${days} 天）`]]) {
+    const list = groups[g];
+    if (!list.length) continue;
+    const key = `pr:${g}`;
+    const open = (g !== 'done') !== toggled.has(key);
+    rows.push({ key, kind: 'prGroup', level: 0, texts: [name], end: String(list.length), toggle: key, open });
+    if (!open) continue;
+    const shown = g === 'done' ? list.slice(0, PR_DONE_MAX) : list;
+    rows.push(...apart(shown.flatMap(item)));
+    // 其余的去 GitHub 的已合并列表看（网页没有完整 PR 列表）
+    if (list.length > shown.length) {
+      rows.push({ key: `${key}:more`, kind: 'more', level: 1, texts: [t`另有 ${list.length - shown.length} 个 · 在浏览器里看全部`],
+        ...(list[0].p.url && { href: list[0].p.url.replace(/\/pull\/\d+$/, '/pulls?q=is%3Apr+is%3Amerged') }) });
+    }
+  }
+  return rows.length ? rows : [{ key: 'pr:empty', kind: 'empty', level: 0, texts: [t('没有等待处理或最近合并的 PR')] }];
 }
 
 // 需要确认（需求 6）：checkItems 按 CONFLICT_TEXT 顺序分组；c 默认折叠；每组最多 30 条
