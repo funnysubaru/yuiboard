@@ -28,6 +28,16 @@ const groupNums = (d, code) => {
 
 // ---- design §3.5 验收推演（PR 标题为虚构，保留真实标题的识别难点） ----
 
+test('N35 写明的代号收窄后没命中时看全部候选；裸编号不放宽', () => {
+  const mvp = doc('mvp', '### 里程碑 M1：x\n- [ ] 1 a\n');
+  const next = doc('NEXT', '### 里程碑 N11：y\n- [ ] 11 b\n- [ ] 12 c\n');
+  const o = { knownDocIds: ['mvp', 'NEXT'], knownCodes: ['M1', 'N11'] };
+  const r = resolveRefs(extractRefs('按 mvp 的做法改 N11', o), [mvp, next]);
+  assert.deepEqual([r.tasks, r.missing], [['NEXT#11', 'NEXT#12'], []]);
+  assert.deepEqual(resolveRefs(extractRefs('N11', o), [mvp, next], ['mvp']).tasks, ['NEXT#11', 'NEXT#12'], '会话上下文收窄同理');
+  assert.deepEqual(resolveRefs(extractRefs('mvp 的任务 11', o), [mvp, next]).missing, ['11']);
+});
+
 test('#360 M0-c → 协作版候选内唯一 → 任务 3–10 及子任务', () => {
   const r = link('[V2] feat(collab): M0-c 推送服务 + 部署脚本 + 网页端 + 场景 A 在模拟环境通过 (collab 2.0.4)', COLLAB_LINE);
   assert.deepEqual(r.ambiguous, []);

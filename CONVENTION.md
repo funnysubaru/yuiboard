@@ -326,6 +326,7 @@ Task documents and PR titles in this repository are read by YUIBoard (a local pr
 - Groups: `### Milestone M1: <description>`, the code unique within the document.
 - Dependencies: in parentheses at the end of the task title, e.g. `(depends on 1, 2.1)`, `(depends on 2.1–2.4)`, `(depends on M1)`, `(depends on other-spec#3)`.
 - PR titles: put the delivered tasks in the title as `Task 3`, `Tasks 3.1–3.4` or a milestone code; when numbers repeat across documents write `<document>#<number>`; bare numbers are not references. For partial delivery write `Task 13 (partial)`. The ADR short form `ADR-0033#64` works only when there is a single ADR-0033; otherwise write the full document name.
-- Markdown in task bodies: only lists, checkboxes, code blocks, quotes, tables, bold, italic, strikethrough, inline code and links; no headings, horizontal rules, images, footnotes or HTML tags.
+- Task numbers: check the documents; use only numbers that exist there. Unsure? Look it up, never guess from memory.
+- Markdown in task bodies: only lists, checkboxes, code blocks, quotes, tables, bold, italic, strikethrough, inline code and links; no headings, rules, images, footnotes or HTML.
 Full convention: https://github.com/funnysubaru/yuiboard/blob/main/CONVENTION.md
 ```

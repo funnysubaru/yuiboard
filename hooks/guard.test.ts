@@ -173,7 +173,89 @@ test('认不出项目时放行', async ($, on) => {
   expect(w.ran).toEqual(['Write'])
 })
 
+// ---- N35：提交标题、新建分支名、派活说明 ----
+const REPO = { [SPEC]: OLD, '/w/one/.git': null, '/other/.git': null, ...{} }
+const agent = (prompt: string) => ({ tool: 'Agent', description: 'x', prompt })
+
+test('本仓库的 git commit、新建分支写明的文档名对不上：拦下；裸数字放行并提示，结果里带 context', { options: { lang: 'zh' } }, async ($, on) => {
+  const w = world(on, 'S1', REPO, '/w/one/src')
+  await start($, w)
+  expect(await call($, { tool: 'Bash', command: 'git commit -m "feat: a#99"' })).toContain('不存在的任务：a#99')
+  expect(await call($, { tool: 'Bash', command: 'git switch -c fix/x && git commit -m "feat: a#99"' })).toContain('a#99')
+  expect(w.ran).toEqual([])
+  const r = (await $.tool.call({ tool: 'Bash', command: 'git commit -m "feat: 任务 99"' } as never)) as { deny?: string; context?: string[] }
+  expect(r.deny).toBeUndefined()
+  expect(r.context?.[0]).toContain('任务 99')
+  expect(((await $.tool.call({ tool: 'Bash', command: 'git commit -m "feat: a#1"' } as never)) as { context?: string[] }).context).toBeUndefined()
+  expect(w.ran).toEqual(['Bash', 'Bash'])
+})
+
+test('别的仓库里的、判断不了在哪的命令不拦；git -C、cd 进本仓库与它的 worktree 算本仓库', { options: { lang: 'zh' } }, async ($, on) => {
+  const w = world(on, 'S1', { ...WT_FILES_N35, '/other/.git': null }, '/other')
+  await start($, w)
+  for (const command of ['git commit -m "a#99"', 'cd ~/x && git commit -m "a#99"', 'git -C "$D" commit -m "a#99"']) {
+    expect(await call($, { tool: 'Bash', command })).toBeUndefined()
+  }
+  expect(await call($, { tool: 'Bash', command: 'git -C /w/one commit -m "a#99"' })).toContain('a#99')
+  expect(await call($, { tool: 'Bash', command: 'cd /wt/n35 && git commit -m "a#99"' })).toContain('a#99')
+  expect(await call($, { tool: 'Bash', command: 'cd /wt/n35 && git commit -m "a#7"' })).toBeUndefined()
+  // 管道左边的 cd 不改后面的目录：提交还在 /other（PR #60 review）
+  expect(await call($, { tool: 'Bash', command: 'cd /w/one | cat; git commit -m "a#99"' })).toBeUndefined()
+})
+
+test('Git 路径变量指到别的仓库：同一次 Bash 里 export 过的提交不按本仓库查', { options: { lang: 'zh' } }, async ($, on) => {
+  const w = world(on, 'S1', REPO, '/w/one/src')
+  await start($, w)
+  expect(await call($, { tool: 'Bash', command: 'export GIT_DIR=/other/.git GIT_WORK_TREE=/other; git commit -m "a#99"' })).toBeUndefined()
+  expect(await call($, { tool: 'Bash', command: 'git commit -m "a#99"' })).toContain('a#99')
+})
+
+test('派活说明：写明的对不上才拦，行内代码、别的项目的编号放行，裸数字只提示', { options: { lang: 'zh' } }, async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  expect(await call($, agent('实现 a#99'))).toContain('派活说明')
+  expect(await call($, agent('参考 ``a#99`` 的写法\n\n~~~\na#99\n~~~\n\n    a#99'))).toBeUndefined()
+  for (const prompt of ['实现 a#1', '修 other-vendor#127', '别写成 `a#99`', '没有任务号']) expect(await call($, agent(prompt))).toBeUndefined()
+  const r = (await $.tool.call(agent('做任务 99') as never)) as { context?: string[] }
+  expect(r.context?.[0]).toContain('任务 99')
+  expect(w.ran.length).toBe(6)
+})
+
+test('派活的 description 与 prompt 各算各的 Markdown：prompt 开头的缩进代码不查，跨字段的反引号不配对', { options: { lang: 'zh' } }, async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  for (const tool of ['Agent', 'Task']) {
+    expect(await call($, { tool, description: '分析日志', prompt: '    a#99\n\n请分析以上日志。' })).toBeUndefined()
+  }
+  expect(await call($, { tool: 'Agent', description: '修 `x', prompt: '实现 a#99 `' })).toContain('派活说明')
+  expect(await call($, { tool: 'Agent', description: '实现 a#99', prompt: '没有任务号' })).toContain('派活说明')
+  expect(w.ran.length).toBe(2)
+})
+
+test('guard 为 off、服务断线：提交与派活一律放行', { options: { guard: 'off' } }, async ($, on) => {
+  const w = world(on, 'S1', REPO, '/w/one')
+  await start($, w)
+  expect(await call($, { tool: 'Bash', command: 'git commit -m "a#99"' })).toBeUndefined()
+  expect(await call($, agent('实现 a#99'))).toBeUndefined()
+})
+
+test('服务断线：提交与派活放行', async ($, on) => {
+  const w = world(on, 'S1', REPO, '/w/one')
+  await start($, w)
+  w.offline = true
+  await w.clock.advance(5000)
+  expect(await call($, { tool: 'Bash', command: 'git commit -m "a#99"' })).toBeUndefined()
+  expect(await call($, agent('实现 a#99'))).toBeUndefined()
+  expect(w.ran).toEqual(['Bash', 'Agent'])
+})
+
 // ---- worktree（PR review）：owner 多在工作区的 git worktree 里开发 ----
+const WT_FILES_N35 = {
+  [SPEC]: OLD,
+  '/w/one/.git': null,
+  '/wt/n35/.git': 'gitdir: /w/one/.git/worktrees/n35\n',
+  '/wt/n35/.claude/specs/a/tasks.md': `${OLD}- [ ] 7 seven\n`,
+}
 const WT = '/wt/feature'
 const WT_FILES = {
   [SPEC]: OLD,

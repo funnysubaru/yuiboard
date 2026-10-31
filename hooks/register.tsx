@@ -1,8 +1,8 @@
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import { setLang } from '../web/i18n.mjs'
-import { applyEdit, docIssues, isTaskDoc, parseDoc, prTitles, titleIssues } from '../src/guard.mjs'
-import { commandText, conventionBrief, focusOf, focusPath, guardDocText, guardTitleText, langOf, paneOf, pickProject } from './model.mjs'
+import { applyEdit, branchWords, commandDir, commandTexts, docIssues, isTaskDoc, parseDoc, prTitles, REF_WHERE, refProblems, titleIssues, withoutCode } from '../src/guard.mjs'
+import { commandText, conventionBrief, focusOf, focusPath, guardDocText, guardHintText, guardRefText, guardTitleText, langOf, lineButton, paneOf, pickProject } from './model.mjs'
 import type { View } from './state.d.ts'
 
 // 钩子模块（design §5）：会话开始 / 结束、/yuiboard、轮询、面板绘制。只做摆放，不含文案。
@@ -19,6 +19,7 @@ const FOCUS_KEY = { plugin: 'yuiboard', key: 'focusKey' } as const
 const REV = { plugin: 'yuiboard', key: 'rev' } as const
 const AUTO_OPENED = { plugin: 'yuiboard', key: 'autoOpened' } as const
 const VIEW = { plugin: 'yuiboard', key: 'view' } as const
+const LINE = { plugin: 'yuiboard', key: 'line' } as const
 
 /** 顶部横幅的三种原因（design §7）；paneOf 负责翻译成文字 */
 export type Problem =
@@ -43,6 +44,8 @@ export type Polled = {
   summaries: Record<string, { etag: string | null; summary: Summary }>
   /** 认出的项目（手动选的优先），认不出为 null */
   projectId: string | null
+  /** 会话当前目录，算默认选中的分支线 */
+  cwd: string | null
   /** 当前会话在该项目里的聚焦任务；还没认出项目或没有摘要时为 null */
   focus: Focus | null
   /** 本轮请求的问题；空数组 = 一切正常 */
@@ -54,7 +57,7 @@ export type Polled = {
 // 会话切换当成首次取得（PR #38 review P1）；重载后模块是新的（seenId 为 null），才退回 $.state 里记的 id
 type Live = Polled & { busy: boolean; timer: { cancel: () => void } | null; projectsText: string | null; switchedFrom: string | null | undefined; seenId: string | null }
 const fresh = (url: string, lang: string): Live => ({
-  url, lang, projects: null, summaries: {}, projectId: null, focus: null, problems: [],
+  url, lang, projects: null, summaries: {}, projectId: null, cwd: null, focus: null, problems: [],
   busy: false, timer: null, projectsText: null, switchedFrom: undefined, seenId: null,
 })
 let S: Live = fresh('', 'en')
@@ -120,12 +123,14 @@ async function round($: Engine, s: Live) {
     s.projectId = null
     s.focus = null
     await $.state.set(PICKED, null)
+    await $.state.set(LINE, null)
     await $.state.set(PENDING, null)
     await $.state.set(FOCUS_KEY, null)
   }
   if (s !== S) return
   const my = gen
-  let changed = false
+  let changed = cwd !== s.cwd
+  s.cwd = cwd
 
   // 2. 项目列表
   const list = await getJson($, s.url, '/api/projects', null)
@@ -257,14 +262,63 @@ async function titleGuard($: Engine, command: string) {
     let issues = check(g.summary.docs ?? [])
     if (!issues.length) continue
     const root = await checkoutRoot($, await $.session.cwd(), g.summary.workspaces ?? [])
-    if (root !== null) {
-      const local = await checkoutDocs($, root, g.project)
-      const ids = new Set(local.map(d => d.docId))
-      issues = check([...(g.summary.docs ?? []).filter((d: { docId: string }) => !ids.has(d.docId)), ...local])
-    }
+    if (root !== null) issues = check(await docsAt($, g, root))
     if (issues.length) return { deny: guardTitleText(title, issues, $.plugin.root) }
   }
   return null
+}
+
+/** 摘要里的文档，同 docId 的换成 root 检出里的版本（看板读工作区，分支上常新加任务与代号） */
+async function docsAt($: Engine, g: NonNullable<ReturnType<typeof guarded>>, root: string) {
+  const local = await checkoutDocs($, root, g.project)
+  const ids = new Set(local.map(d => d.docId))
+  return [...(g.summary.docs ?? []).filter((d: { docId: string }) => !ids.has(d.docId)), ...local]
+}
+
+/** 查一段文字的任务引用（N35）：按摘要有问题时，root 不为 null 就用该检出的文档重查 */
+async function refsIn($: Engine, g: NonNullable<ReturnType<typeof guarded>>, text: string, where: string, root: string | null) {
+  const r = refProblems(text, g.summary.docs ?? [], where)
+  return root !== null && r.deny.length + r.hint.length > 0 ? refProblems(text, await docsAt($, g, root), where) : r
+}
+
+type Refs = { deny?: string; hints: string[] }
+
+/**
+ * N35 git commit 的提交标题、新建分支名：只查实际作用在本项目仓库（工作区或它的 worktree）里的；
+ * 命令在别的仓库里、或判断不了在哪，都不查。gh pr 的标题归 titleGuard。
+ */
+async function commandGuard($: Engine, command: string): Promise<Refs> {
+  const out: Refs = { hints: [] }
+  const g = guarded()
+  if (!g) return out
+  const cwd = await $.session.cwd()
+  for (const c of commandTexts(command)) {
+    const at = c.pr ? null : commandDir(cwd, c.dir)
+    const root = at === null ? null : await checkoutRoot($, at, g.summary.workspaces ?? [])
+    if (root === null) continue
+    const where = c.branch ? REF_WHERE.branch : REF_WHERE.commit
+    const r = await refsIn($, g, c.branch ? branchWords(c.text) : c.text, where, root)
+    if (r.deny.length) return { deny: guardRefText(where, r.deny, $.plugin.root), hints: [] }
+    out.hints.push(...r.hint)
+  }
+  return out
+}
+
+/** N35 派给子 agent 的说明：不看仓库（说明不是命令），行内代码与代码块不查。各字段是独立的 Markdown，分别去掉代码再合并 */
+async function dispatchGuard($: Engine, fields: (string | undefined)[]): Promise<Refs> {
+  const g = guarded()
+  if (!g) return { hints: [] }
+  const root = await checkoutRoot($, await $.session.cwd(), g.summary.workspaces ?? [])
+  const text = fields.map(f => withoutCode(f ?? '')).join('\n\n')
+  const r = await refsIn($, g, text, REF_WHERE.dispatch, root)
+  return r.deny.length ? { deny: guardRefText(REF_WHERE.dispatch, r.deny, $.plugin.root), hints: [] } : { hints: r.hint }
+}
+
+/** 按 N35 的检查结果拦下，或让工具跑完、把裸数字的提示随结果给模型 */
+async function answer(r: Refs, run: () => Promise<any>) {
+  if (r.deny !== undefined) return { deny: r.deny }
+  const ran = await run()
+  return r.hints.length && ran.deny === undefined ? { ...ran, context: [...(ran.context ?? []), guardHintText(r.hints)] } : ran
 }
 
 /**
@@ -375,7 +429,12 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => (off ? null
     : await docGuard($, e.file_path, before => applyEdit(before, e.old_string, e.new_string, e.replace_all === true))) ?? next(e))
     .catch(($, e, next) => next(e))
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => (off ? null : await titleGuard($, e.command)) ?? next(e))
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (off) return next(e)
+    return (await titleGuard($, e.command)) ?? answer(await commandGuard($, e.command), () => next(e))
+  }).catch(($, e, next) => next(e))
+  on('tool.call', { tool: ['Agent', 'Task'] }, async ($, e, next) => (off ? next(e)
+    : answer(await dispatchGuard($, [e.description, e.prompt]), () => next(e))))
     .catch(($, e, next) => next(e))
 
   on('command.run', { command: 'yuiboard' }, async $ => {
@@ -390,12 +449,13 @@ export const register: Register = (on, options) => {
     // 绘制时读的 $.state 都会订阅：rev（摘要换了）、视图、折叠、待滚动目标变了就重画
     await $.state.get(REV)
     const view: View = (await $.state.get(VIEW)).value ?? 'overview'
+    const lineChoice = (await $.state.get(LINE)).value ?? null
     const toggled = (await $.state.get(TOGGLED)).value ?? []
     const pending = (await $.state.get(PENDING)).value ?? null
     const p = polled()
     const pane: Pane = paneOf({
       summary: p.projectId !== null ? (p.summaries[p.projectId]?.summary ?? null) : null,
-      projects: p.projects, projectId: p.projectId, view, toggled, focus: p.focus, url: p.url,
+      projects: p.projects, projectId: p.projectId, view, lineChoice, cwd: p.cwd, toggled, focus: p.focus, url: p.url,
       now: await $.clock.now(), problems: p.problems,
     })
     // 行底色（面板稿 v2）：桌面等远端界面用带透明度的色值，叠在任何背景上都是浅色调；
@@ -406,6 +466,7 @@ export const register: Register = (on, options) => {
     const title = pane.header.find(r => r.kind === 'title')
     const open = pane.header.find(r => r.kind === 'link')
     const navs = pane.header.filter(r => r.kind === 'nav')
+    const tabs = pane.header.filter(r => r.kind === 'line')
     const stats = pane.header.filter(r => r.kind === 'stat')
     const rows = [...pane.body, ...(pane.more ? [pane.more] : [])]
     // 聚焦卡片的边框用主任务的状态色
@@ -561,6 +622,15 @@ export const register: Register = (on, options) => {
         </Box>
       )
     }
+    // 分支线切换行：比导航低一级，选中项是加粗下划线的文字（不抢导航的主题色），其余是灰色按钮；
+    // 分隔点贴在前一项后面，折行后新一行不以点开头
+    const tab = (row: Row, n: number) => (
+      <Box key={row.key} flexDirection="row" columnGap={1}>
+        {row.active ? <Text bold underline>{row.texts[0]}</Text>
+          : <Button key={lineButton(row.choose!)} label={row.texts[0]!} plain dimColor onPress={() => void $.state.set(LINE, { line: row.choose! })} />}
+        {n < tabs.length - 1 && <Text dimColor>·</Text>}
+      </Box>
+    )
     // 总览数字一行：各段之间「·」
     const stat = (row: Row, n: number) => (
       <Box key={row.key} flexDirection="row" columnGap={1}>
@@ -581,6 +651,7 @@ export const register: Register = (on, options) => {
           {open?.href !== undefined && <Box key="open" flexShrink={0}><Link href={localLink(open.href)} label={`${open.texts[0]} ↗`} /></Box>}
         </Box>
         {navs.length > 0 && <Box key="nav" flexDirection="row" flexWrap="wrap" columnGap={2}>{navs.map(nav)}</Box>}
+        {tabs.length > 0 && <Box key="lines" flexDirection="row" flexWrap="wrap" columnGap={1}>{tabs.map(tab)}</Box>}
         {stats.length > 0 && <Box key="stats" flexDirection="row" flexWrap="wrap" columnGap={1}>{stats.map(stat)}</Box>}
         {pane.banners.map(line)}
         {pane.focus.length > 0 && (
@@ -625,6 +696,7 @@ type Row = {
   view?: View
   active?: boolean
   pick?: string
+  choose?: string | null
 }
 type Pane = { header: Row[]; banners: Row[]; focus: Row[]; body: Row[]; more: Row | null }
 

@@ -1,6 +1,6 @@
 {
   "name": "yuiboard",
-  "version": "0.1.9",
+  "version": "0.1.11",
   "description": "YUIBoard in a Claude Code pane: progress, items to confirm and diagnostics from a local devboard service.",
   "author": {
     "name": "JimmyFu"

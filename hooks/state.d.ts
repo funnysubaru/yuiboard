@@ -10,6 +10,8 @@ declare module 'claude-code' {
       toggled: string[]
       /** 手动选的项目 id */
       picked: string | null
+      /** 本会话手动选的分支线：{ line: 线 id }，{ line: null } = 全部；null = 没选过，按所在工作区算默认（owner 已定 22） */
+      line: { line: string | null } | null
       /** 待滚动到的任务键；回到总览那一帧再滚（design §5.2） */
       pendingScroll: string | null
       /** 最近一次取得的会话 id：区分首次取得（含 mod 重载）与会话切换（design §3.2） */

@@ -697,8 +697,8 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
         // 子 agent 派活的说明通常会写明 spec 名；只有裸编号的派活多半属于别的项目 / 仓库外的 spec（实测：派 devboard
         // 自己的任务 3.1…6.3 被整会话上下文——含子 agent 执行过的命令——带到 task-panel-backend），一律不采信。
         if (bareOnly && g.kind === 'dispatch' && cands.length > 1) res.tasks = [];
-        // 命令常在别的仓库里跑（N32），对不上任务不报冲突
-        if (g.kind !== 'command') {
+        // 命令常在别的仓库里跑（N32），派活说明常带别的项目的编号，对不上任务都不报冲突：只报人发的消息（N35，AI 写错由约定守卫当场拦）
+        if (g.kind === 'prompt') {
           for (const a of res.ambiguous) issue(g, msg`${name}里的「${a.raw}」有歧义，可能是 ${brief(a.candidates)}`);
           for (const m of res.missing) {
             issue(g, onlyDuplicates(m, cands, g.refs.docIds) ? msg`${name}里的「${m}」对应的编号在文档里重复出现，无法确定是哪一条`
