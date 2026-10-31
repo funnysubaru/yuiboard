@@ -88,7 +88,7 @@ export function focusPath(summary, key) {
 /**
  * 当前选中的分支线（N34，owner 已定 22），null = 全部。手动选的优先（choice：{ line: 线 id }，{ line: null } = 全部，null = 没选过；不用字符串当「全部」，线 id 可以就叫 all）；
  * 没选过看会话所在工作区：摘要 workspaces[] 里包含 cwd 的最深一个，id 等于某条线的 id 就选它（配了 workspace 的线）；
- * 主工作区（id 是 repo，含它下面的 worktree）对应 base 为 main 的线；都不中是全部。
+ * 主工作区（workspaces[0]，含它下面的 worktree）对应 base 为 main 的线；都不中是全部。不按 id 认主工作区：线 id 也可以叫 repo。
  * 单线项目、还没拿到摘要时不筛选。
  */
 export function activeLine(choice, summary, lines, cwd) {
@@ -96,8 +96,10 @@ export function activeLine(choice, summary, lines, cwd) {
   if (lines.some((l) => l.id === choice?.line)) return choice.line;
   if (!cwd) return null;
   const here = trim(cwd);
-  const [ws] = (summary.workspaces ?? []).filter((w) => w.path && !w.ref && within(here, trim(w.path))).sort((a, b) => b.path.length - a.path.length);
-  return (lines.find((l) => l.id === ws?.id) ?? (ws?.id === 'repo' ? lines.find((l) => l.base === 'main') : null))?.id ?? null;
+  const list = summary.workspaces ?? [];
+  const [ws] = list.filter((w) => w.path && !w.ref && within(here, trim(w.path))).sort((a, b) => b.path.length - a.path.length);
+  if (!ws) return null;
+  return lines.find(ws === list[0] ? (l) => l.base === 'main' : (l) => l.id === ws.id)?.id ?? null;
 }
 
 // 只看一条线的摘要，口径同网页 lineBoard：文档按 docLine，PR 按 branchLine；overallStats、checkItems 吃它就是筛选后的数。

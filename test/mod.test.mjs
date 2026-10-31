@@ -728,6 +728,10 @@ test('activeLine：手动选的优先，默认看所在工作区（取最深的�
   assert.equal(at(null, '/ws/repo/.claude/worktrees/x', based), 'main');
   assert.equal(at(null, '/ws/repo/side/src', based), 'side');
   assert.equal(at(null, '/elsewhere', based), null);
+  // 线 id 也可以叫 repo：主工作区仍看 base，不当成这条线；没有 base 为 main 的线是全部
+  const repoLine = [{ id: 'repo', name: '发布', base: 'release' }, { id: 'primary', name: '主线', base: 'main' }];
+  assert.equal(at(null, '/ws/repo/src', repoLine), 'primary');
+  assert.equal(at(null, '/ws/repo/src', [repoLine[0], { id: 'other', name: '其它', base: 'other' }]), null);
   assert.equal(at(null, '/ws/repo', based.slice(0, 1)), null, '单线项目不筛选');
 });
 
