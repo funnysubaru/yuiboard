@@ -2,7 +2,7 @@
 // 纯函数、不 import 任何 node: 模块（mod 只能 import 插件内的纯 ES 模块），路径一律按 POSIX 字符串处理。
 
 import { globMatcher, parseTasksDoc, parseAdrDoc } from './parse.mjs';
-import { extractRefs, aliasMap, unalias, hasRefs, refOptions, checkRefs } from './refs.mjs';
+import { extractRefs, aliasMap, unalias, hasRefs, refOptions, checkRefs, onlyDuplicates } from './refs.mjs';
 import { msg } from './msg.mjs';
 
 // 规范化成绝对 POSIX 路径：合并重复斜杠、去掉 . 与 ..（越过根的 .. 丢弃）、NFC。不是绝对路径返回 null。
@@ -104,8 +104,11 @@ function prTitlesOf(words) {
  * 新建的分支名（`git worktree add -b`、`git checkout -b`、`git switch -c`，大写选项同）。提交标题取 `-m` 值的第一行，
  * `-m "$(cat <<'EOF' …)"` 取这个参数自己那段 heredoc 正文的第一行；`-m "$MSG"`、不含 heredoc 的命令替换读不出，一律不返回
  * （别的命令的 heredoc 不能拿来当提交标题，yuiboard PR #10 review）。不认 -F 文件。
+ * dir（N35）是这个动作实际所在的目录：相对命令起点的路径（'' = 起点本身）或绝对路径，看 `cd`、`git -C`；判断不了为 null，
+ * 调用方放行：Git 路径变量（前缀、export）、管道或后台里的 cd、后台任务之后、子 shell、条件、source 等都算判断不了。
+ * 不是 shell 解释器，看不透的宁可 null。gh pr 的标题带 pr: true。
  * @param {string} command
- * @returns {{ text: string, branch: boolean }[]}
+ * @returns {{ text: string, branch: boolean, pr?: true, dir: string|null }[]}
  */
 export function commandTexts(command) {
   const bodies = [];
@@ -113,13 +116,27 @@ export function commandTexts(command) {
   if (text === null) return [];
   const out = [];
   const subject = (s) => s.split('\n').map((l) => l.trim()).find(Boolean);
+  let cwd = ''; // 这条命令之前的 cd 走到的目录
   // 按命令的先后输出：扫描器给同一时刻的信号排序时，后续活动只续最后一条，顺序反了焦点就落到先做的那个任务上（PR #54 review）
-  for (const words of commands(text)) {
-    out.push(...prTitlesOf(words).map((t) => ({ text: t.title, branch: false })));
+  const cmds = commands(text);
+  for (const [n, words] of cmds.entries()) {
     let i = words.findIndex((w) => typeof w !== 'string' || !/^[A-Za-z_]\w*=/.test(w));
+    const before = cmds[n - 1]?.sep;
+    // 子 shell、块、条件、动态执行、没收尾的命令替换里的 cd 分不清作用范围；后台任务之后 cd 算不算数也分不清，之后一律判断不了
+    if (before === '&' || UNCLEAR_CWD.test(words[i]) || words.some(opensSubstitution)) cwd = null;
+    // 赋值、export 留下的 Git 路径变量管到之后每条命令（只写在 git 前面的前缀只管这一条，见下）
+    if ((i < 0 || typeof words[i] !== 'string' || PERSIST_ENV.has(words[i])) && words.some(isGitPathVar)) cwd = null;
+    // 管道里每一段都在子 shell 里跑，这里的 cd 不影响后面
+    if (words[i] === 'cd') cwd = before === '|' || words.sep === '|' ? null : enter(cwd, words[i + 1]);
+    let dir = words.slice(0, i).some(isGitPathVar) ? null : cwd;
+    out.push(...prTitlesOf(words).map((t) => ({ text: t.title, branch: false, pr: true, dir })));
     if (words[i] !== 'git') continue;
     // git 的全局选项：-C <路径>、-c <键=值> 带值，其余不带
-    for (i++; typeof words[i] === 'string' && words[i].startsWith('-'); i++) if (words[i] === '-C' || words[i] === '-c') i++;
+    for (i++; typeof words[i] === 'string' && words[i].startsWith('-'); i++) {
+      if (words[i] === '-C') dir = enter(dir, words[++i]);
+      else if (words[i] === '-c') i++;
+      else if (/^--(git-dir|work-tree)\b/.test(words[i])) dir = null;
+    }
     const sub = words[i] === 'worktree' && words[i + 1] === 'add' ? 'worktree' : words[i];
     const flag = { commit: /^-[A-Za-z]*m$|^--message$/, worktree: /^-[bB]$/, checkout: /^-[bB]$/, switch: /^-[cC]$|^--create$/ }[sub];
     if (!flag) continue;
@@ -130,11 +147,28 @@ export function commandTexts(command) {
       if (inline === undefined && !flag.test(w)) continue;
       const v = inline ?? words[j + 1];
       const t = sub !== 'commit' ? v : typeof v === 'string' ? subject(v) : v && subject(ownHeredoc(text, v, bodies) ?? '');
-      if (typeof t === 'string' && t) out.push({ text: t, branch: sub !== 'commit' });
+      if (typeof t === 'string' && t) out.push({ text: t, branch: sub !== 'commit', dir });
       break; // 只取第一处：第二个 -m 是提交正文
     }
   }
   return out;
+}
+
+const UNCLEAR_CWD = /^(\(|\{|(pushd|popd|if|then|else|elif|do|while|until|for|case|source|\.|eval)$)/;
+const PERSIST_ENV = new Set(['export', 'declare', 'typeset', 'readonly']);
+const isGitPathVar = (w) => /^GIT_(DIR|WORK_TREE)(=|$)/.test(typeof w === 'string' ? w : w.text);
+// $( 或反引号在这个词里没收尾：命令替换里的 ; 把它切成了几条，后面几条其实在替换里
+const opensSubstitution = (w) => typeof w !== 'string' && /(\$\(|`)[^)`]*$/.test(w.text);
+
+// 从 dir 走进 target。~、cd -、无参数的 cd（回 home）、变量都读不出，算判断不了
+function enter(dir, target) {
+  if (dir === null || typeof target !== 'string' || target === '' || /^[-~]/.test(target)) return null;
+  return target.startsWith('/') ? target : dir ? `${dir}/${target}` : target;
+}
+
+/** commandTexts 的 dir 落到绝对路径：cwd 是命令的起点；判断不了返回 null */
+export function commandDir(cwd, dir) {
+  return dir === null ? null : normalize(dir.startsWith('/') ? dir : `${cwd}/${dir}`);
 }
 
 // 读不出字面值的词里写着 heredoc 时，取它自己那段正文：stripHeredocs 按 opener 出现的顺序收正文，词前面有几个 opener 就是第几段。
@@ -184,7 +218,8 @@ function stripHeredocs(s, bodies = null) {
 const heredocOpeners = (s) => s.matchAll(/(?<!<)<<(?!<)(-?)[ \t]*(?:'([^']*)'|"([^"]*)"|([^\s;&|<>()'"`$\\]+))?/g);
 
 // 极简 shell 分词：按控制符切成多条命令，每条是词的数组；读不出字面值的词（含 $、`）记成 { text, at }（原样文字与起点下标），
-// 调用方只认字符串，commandTexts 拿它找自己的 heredoc。
+// 调用方只认字符串，commandTexts 拿它找自己的 heredoc。每条命令的 sep 是切开它的控制符：'&&'、'||'、'|'（含 |&）、'&'（后台）、
+// ';'、'\n'，重定向里的 &、|（2>&1、&>、>|）是 ''。
 // ponytail: 不处理 $'…'、子 shell 里的命令；这些情况的标题按读不出放行。
 function commands(s) {
   const cmds = [];
@@ -197,7 +232,11 @@ function commands(s) {
     if (has) words.push(opaque ? { text: word, at } : word);
     word = ''; has = false; opaque = false;
   };
-  const cut = () => { end(); if (words.length) cmds.push(words); words = []; };
+  const cut = (sep) => {
+    end();
+    if (words.length) { words.sep = sep; cmds.push(words); }
+    words = [];
+  };
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (!has) at = i;
@@ -221,12 +260,16 @@ function commands(s) {
     } else if (/\s/.test(c) && c !== '\n') {
       end();
     } else if (c === '\n' || c === ';' || c === '&' || c === '|') {
-      cut();
+      let sep = c;
+      if ('&|'.includes(c) && s[i + 1] === c) { sep = c + c; i++; }
+      else if (c === '|' && s[i + 1] === '&') i++;
+      else if (/[<>]/.test(s[i - 1] ?? '') || (c === '&' && s[i + 1] === '>')) sep = '';
+      cut(sep);
     } else {
       word += c; has = true;
     }
   }
-  cut();
+  cut('\n');
   return cmds;
 }
 
@@ -332,6 +375,63 @@ export function titleIssues(title, docs, branchLines = [], base = null) {
     if (!best.length) break;
   }
   return best ?? [];
+}
+
+/** refProblems 的出处（N35） */
+export const REF_WHERE = { commit: msg('提交标题'), branch: msg('分支名'), dispatch: msg('派活说明') };
+
+// 分支名按 / - _ 切开才是一个个词（feat/n99-x 里的 n99）；代号里的连字符也被切开，M0-c 这种带后缀的代号在分支名里不查
+export const branchWords = (branch) => branch.replace(/[/_-]/g, ' ');
+
+// 派活说明里行内代码、代码块是引用的材料（日志、举例、别的仓库的编号），不是在点名任务。按 CommonMark 认：
+// ``` / ~~~ 围栏（收尾的同字符、不短于开头；没收尾到文末）、空行后四空格或 Tab 缩进的块（段落里的缩进行是续行，照查）、
+// 长度相等的反引号配对（不跨空行）。列表里的缩进续行也会被当成代码块，只会放行，不会误拦。
+export function withoutCode(text) {
+  const out = [];
+  let fence = null;
+  let prose = false; // 上一行是段落
+  for (const line of text.split('\n')) {
+    const open = fence ? null : line.match(/^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
+    if (fence || open) {
+      if (open) fence = new RegExp(`^ {0,3}${open[1][0]}{${open[1].length},}\\s*$`);
+      else if (fence.test(line)) fence = null;
+      out.push('');
+      prose = false;
+    } else if (!prose && line.trim() && /^(?: {4}| {0,3}\t)/.test(line)) {
+      out.push('');
+    } else {
+      out.push(line);
+      prose = Boolean(line.trim());
+    }
+  }
+  return out.join('\n').replace(/(?<![`\\])(`+)(?!`)(?:(?!\n\s*\n)[\s\S])*?(?<!`)\1(?!`)/g, ' ');
+}
+
+/**
+ * 提交标题、新建分支名、派活说明里的任务引用是否真实存在（N35，owner 已定 8）。比 titleIssues 窄：
+ * deny 只收写明了文档名或代号却对不上的（NEXT#99、N99）；裸数字（任务 99）进 hint，只提示不拦。
+ * 歧义、只对上重复编号、代号对应的任务全作废都是真实存在的写法，这里不管。别的仓库的 other-vendor#127 本来就不算引用。
+ * ADR-0099#3 只在项目真有 ADR 时算：没有 ADR 的项目里它多半是别的项目的编号。
+ * @param {string} text
+ * @param {object[]} docs 候选文档
+ * @param {string} where REF_WHERE 的一项
+ * @returns {{ deny: string[], hint: string[] }}
+ */
+export function refProblems(text, docs, where) {
+  const alias = aliasMap(docs);
+  const opts = refOptions(docs, alias);
+  const raw = unalias(extractRefs(text, opts), alias);
+  const unknown = raw.unknown.filter((u) => docs.some((d) => d.adr) || !/^ADR-/i.test(u));
+  const { res } = checkRefs(raw, docs, alias, opts.knownDocIds, where);
+  const missing = (m) => res.missing.includes(m) && !onlyDuplicates(m, docs, raw.docIds);
+  const named = { ...raw, keys: [], nums: [], codes: [], docIds: [], unknown };
+  return {
+    deny: [
+      ...raw.keys.filter(missing).map((k) => msg`${where}引用了不存在的任务：${k}`),
+      ...checkRefs(named, docs, alias, opts.knownDocIds, where).issues,
+    ],
+    hint: raw.nums.filter(missing).map((n) => msg`${where}里的「任务 ${n}」在本项目的文档里找不到`),
+  };
 }
 
 /**

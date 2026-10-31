@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { langOf, pickProject, focusOf, focusPath, paneOf, fit, commandText, rowCost, TEXT_BUDGET } from '../hooks/model.mjs';
+import { activeLine, lineButton, langOf, pickProject, focusOf, focusPath, paneOf, fit, commandText, rowCost, TEXT_BUDGET } from '../hooks/model.mjs';
 import { parseTasksDoc } from '../src/docs.mjs';
 import { computeBoard } from '../src/engine.mjs';
 import { extractRefs } from '../src/refs.mjs';
@@ -702,4 +702,94 @@ test('fit：预算之内原样返回，不加末尾提示', () => {
   const cut = fit({ header: [r('h', 10)], banners: [], body: [r('a', 400), r('b', 400), r('c', 10)], href: 'x' }, 1000);
   // 预留 200 后只放得下 a；b 放不下就停，c 也不再放
   assert.deepEqual([keys(cut.body), cut.more.texts], [['a'], ['其余 2 项在浏览器里看']]);
+});
+
+// ---------------- 分支线切换（N34，owner 已定 22） ----------------
+
+const linesOf = (p) => p.header.filter((r) => r.kind === 'line');
+const LINED = { ...PRS, workspaces: [{ id: 'repo', path: '/ws/repo' }, { id: 'side', path: '/ws/repo/side' }],
+  conflicts: [{ type: 'a', taskKey: 'alpha#1.2' }, { type: 'a', taskKey: 'beta#1' }, { type: 'b', pr: 11 }, { type: 'j', sessionId: 's' }] };
+const linedPane = (over = {}) => paneOf({ summary: LINED, projects: miniProjects(), projectId: 'mini', view: 'overview', toggled: [],
+  focus: { keys: ['alpha#1.2'], recent: false }, url: URL0, now: NOW_MS, problems: [], ...over });
+
+test('activeLine：手动选的优先，默认看所在工作区（取最深的那个），认不出是全部', () => {
+  const at = (choice, cwd, lines = MINI_LINES) => activeLine(choice, LINED, lines, cwd);
+  assert.equal(at(null, '/ws/repo/side/src'), 'side');
+  assert.equal(at(null, '/ws/repo/src'), null, '主工作区不对应任何线');
+  assert.equal(at(null, '/elsewhere'), null);
+  assert.equal(at(null, null), null);
+  assert.equal(at({ line: 'main' }, '/ws/repo/side'), 'main', '手动选的优先');
+  assert.equal(at({ line: null }, '/ws/repo/side'), null, '手动选全部不被默认值盖掉');
+  assert.equal(at({ line: 'gone' }, '/ws/repo/side'), 'side', '记的线已不存在就按默认');
+  assert.equal(at({ line: 'side' }, '/ws/repo/side', MINI_LINES.slice(0, 1)), null, '单线项目不筛选');
+  assert.equal(activeLine({ line: 'side' }, null, MINI_LINES, null), null, '还没拿到摘要');
+  // 主工作区（含它下面的 worktree）对应 base 为 main 的线；配了 workspace 的线优先
+  const based = [{ ...MINI_LINES[0], base: 'main' }, { ...MINI_LINES[1], base: 'release' }];
+  assert.equal(at(null, '/ws/repo/.claude/worktrees/x', based), 'main');
+  assert.equal(at(null, '/ws/repo/side/src', based), 'side');
+  assert.equal(at(null, '/elsewhere', based), null);
+  // 线 id 也可以叫 repo：主工作区仍看 base，不当成这条线；没有 base 为 main 的线是全部
+  const repoLine = [{ id: 'repo', name: '发布', base: 'release' }, { id: 'primary', name: '主线', base: 'main' }];
+  assert.equal(at(null, '/ws/repo/src', repoLine), 'primary');
+  assert.equal(at(null, '/ws/repo/src', [repoLine[0], { id: 'other', name: '其它', base: 'other' }]), null);
+  assert.equal(at(null, '/ws/repo', based.slice(0, 1)), null, '单线项目不筛选');
+});
+
+test('paneOf 切换行：多线才有，全部在前，选中项 active；还没摘要、单线不显示', () => {
+  assert.deepEqual(linesOf(linedPane()).map((r) => [r.choose, r.active, r.texts[0]]), [[null, true, '全部'], ['main', false, '主线'], ['side', false, '支线']]);
+  assert.deepEqual(linesOf(linedPane({ lineChoice: { line: 'side' } })).map((r) => r.active), [false, false, true]);
+  assert.deepEqual(linesOf(linedPane({ projects: miniProjects(MINI_LINES.slice(0, 1)) })), []);
+  assert.deepEqual(linesOf(linedPane({ summary: null })), []);
+  for (const view of ['pr', 'check', 'diag']) assert.equal(linesOf(linedPane({ view })).length, 3, `${view} 视图也显示`);
+});
+
+test('paneOf 选中一条线：总览数字与任务树按线，文档行不写线名，聚焦卡片不变', () => {
+  const all = linedPane();
+  const side = linedPane({ lineChoice: { line: 'side' } });
+  assert.deepEqual(keys(side.body), ['doc:beta']);
+  assert.deepEqual(row(side, 'doc:beta').texts, ['beta'], '选中后不写线名');
+  assert.deepEqual(row(all, 'doc:beta').texts, ['beta', '支线'], '全部时照旧');
+  assert.deepEqual(row(side, 'stat:progress').texts.slice(2), ['0%', '0/2']);
+  assert.equal(row(all, 'stat:progress').texts[3], `${overallStats(LINED).counts.done}/${overallStats(LINED).total}`);
+  assert.deepEqual(side.focus.map((r) => [r.key, r.texts]), all.focus.map((r) => [r.key, r.texts]), '聚焦卡片不受筛选影响');
+  assert.equal(side.body.some((r) => r.highlight), false, '主任务不在这条线时树里不标');
+  assert.equal(row(side, 'open').href, `${URL0}/#/overview?project=mini&line=side`, '在浏览器打开带上线');
+  assert.equal(row(all, 'open').href, `${URL0}/#/overview?project=mini`);
+  assert.equal(side.focus.find((r) => r.kind === 'focus').href, all.focus.find((r) => r.kind === 'focus').href, '卡片的任务链接不带线');
+  assert.doesNotMatch(side.focus.find((r) => r.kind === 'focus').href, /line=/);
+});
+
+test('paneOf 选中一条线：PR 视图、导航数字、需要确认都按线；诊断不筛选', () => {
+  const side = linedPane({ view: 'pr', lineChoice: { line: 'side' } });
+  assert.deepEqual(row(side, 'nav:pr').texts, ['PR', '◕ 1']);
+  assert.deepEqual(keys(side.body), ['pr:merge', 'pr:#11', 'pr:#11:info']);
+  assert.deepEqual(row(side, 'pr:#11:info').texts, ['未关联任务 · ready 15 分钟'], '选中后不写线名');
+  assert.deepEqual(row(linedPane({ view: 'pr', lineChoice: { line: 'main' } }), 'nav:pr').texts, ['PR', '◑ 1', '◕ 1']);
+  // 全部 4 条；支线 = 任务 beta#1 + PR 11；只指向会话的只在全部里
+  assert.deepEqual(row(linedPane({ view: 'check' }), 'nav:check').texts, ['需要确认', '4']);
+  const check = linedPane({ view: 'check', lineChoice: { line: 'side' } });
+  assert.deepEqual(row(check, 'nav:check').texts, ['需要确认', '2']);
+  assert.equal(check.body.filter((r) => r.kind === 'checkItem').length, 2);
+  const diag = (lineChoice) => linedPane({ view: 'diag', lineChoice }).body.map((r) => r.texts);
+  assert.deepEqual(diag({ line: 'side' }), diag(null));
+});
+
+test('rowCost 算上切换按钮的 key', () => {
+  assert.equal(rowCost({ key: 'tab:side', texts: ['支线'], choose: 'side' }), 2 + 1 + 'tab:side'.length + 'line:side'.length);
+  assert.equal(rowCost({ key: 'tab', texts: ['全部'], choose: null }), 2 + 1 + 'tab'.length + 'line'.length);
+});
+
+test('分支线 id 就叫 all：和「全部」不混，默认、手选、切回全部都对，两个标签键不同、不同时 active', () => {
+  const named = [{ id: 'all', name: '全线', docFilter: '^beta' }, { id: 'main', name: '主线', docFilter: '^(?!beta)', base: 'main' }];
+  const sum = { ...LINED, workspaces: [{ id: 'repo', path: '/ws/repo' }, { id: 'all', path: '/ws/all' }] };
+  const p = (lineChoice, cwd = null) => linedPane({ summary: sum, projects: miniProjects(named), lineChoice, cwd });
+  const active = (x) => linesOf(x).filter((r) => r.active).map((r) => r.key);
+  assert.deepEqual(active(p(null, '/ws/all')), ['tab:all'], '默认选中这条线');
+  assert.deepEqual(active(p(null, '/elsewhere')), ['tab'], '认不出是全部');
+  assert.deepEqual(active(p({ line: 'all' })), ['tab:all'], '手选这条线');
+  assert.deepEqual(keys(p({ line: 'all' }).body), ['doc:beta']);
+  assert.deepEqual(active(p({ line: null }, '/ws/all')), ['tab'], '切回全部不被默认值盖掉');
+  assert.ok(keys(p({ line: null }, '/ws/all').body).includes('doc:alpha'));
+  assert.deepEqual(linesOf(p(null)).map((r) => r.key), ['tab', 'tab:all', 'tab:main']);
+  assert.equal(new Set(linesOf(p(null)).map((r) => lineButton(r.choose))).size, 3, '按钮 key 也不同');
 });

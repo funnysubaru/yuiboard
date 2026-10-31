@@ -85,6 +85,29 @@ export function focusPath(summary, key) {
   return [];
 }
 
+/**
+ * 当前选中的分支线（N34，owner 已定 22），null = 全部。手动选的优先（choice：{ line: 线 id }，{ line: null } = 全部，null = 没选过；不用字符串当「全部」，线 id 可以就叫 all）；
+ * 没选过看会话所在工作区：摘要 workspaces[] 里包含 cwd 的最深一个，id 等于某条线的 id 就选它（配了 workspace 的线）；
+ * 主工作区（workspaces[0]，含它下面的 worktree）对应 base 为 main 的线；都不中是全部。不按 id 认主工作区：线 id 也可以叫 repo。
+ * 单线项目、还没拿到摘要时不筛选。
+ */
+export function activeLine(choice, summary, lines, cwd) {
+  if (!summary || lines.length < 2 || choice?.line === null) return null;
+  if (lines.some((l) => l.id === choice?.line)) return choice.line;
+  if (!cwd) return null;
+  const here = trim(cwd);
+  const list = summary.workspaces ?? [];
+  const [ws] = list.filter((w) => w.path && !w.ref && within(here, trim(w.path))).sort((a, b) => b.path.length - a.path.length);
+  if (!ws) return null;
+  return lines.find(ws === list[0] ? (l) => l.base === 'main' : (l) => l.id === ws.id)?.id ?? null;
+}
+
+// 只看一条线的摘要，口径同网页 lineBoard：文档按 docLine，PR 按 branchLine；overallStats、checkItems 吃它就是筛选后的数。
+// tasks、conflicts 不动（由 docs 与 checkItems 的 line 筛）。浅拷贝，聚焦卡片仍用原摘要
+const lineSummary = (summary, line, lines) => (line
+  ? { ...summary, docs: summary.docs.filter((d) => docLine(d, lines) === line), prs: (summary.prs ?? []).filter((p) => p.branchLine === line) }
+  : summary);
+
 // ---------------- 面板内容（design §4、§6、§7） ----------------
 
 /** 每次绘制的字符总量上限（需求 3.6：引擎只画前 100,000 字符，留一成余量）；按 rowCost 计，含 key 与链接地址。 */
@@ -161,16 +184,18 @@ const hasGithub = (summary) => !!summary && summary.freshness?.github?.state !==
 /**
  * 一行画出来后计入引擎 100,000 字上限的字符数（design §4.2），hooks/register.tsx 照此渲染：
  * 文字（每段另加 1，抵段间空格）+ 行尾文字 end + 行 Box 的 key + 折叠按钮（key 即折叠键，标签 ▾ / ▸ 一字）
- * + 视图按钮 `go:<view>` / 项目按钮 `use:<id>` 的 key + 链接地址与标签符号（整行链接加「 ↗」、行尾链接「↗」；
+ * + 视图按钮 `go:<view>` / 项目按钮 `use:<id>` / 分支线按钮 `line:<id>`（全部是 `line`）的 key + 链接地址与标签符号（整行链接加「 ↗」、行尾链接「↗」；
  * 渲染端把 127.0.0.1 / [::1] 改写成 localhost，地址最多长 4 字，一并算进固定的 6）。
- * @param {{ key: string, texts: string[], toggle?: string, view?: string, pick?: string, href?: string }} row
+ * @param {{ key: string, texts: string[], toggle?: string, view?: string, pick?: string, choose?: string|null, href?: string }} row
  * @returns {number}
  */
+export const lineButton = (id) => (id === null ? 'line' : `line:${id}`);
 export const rowCost = (row) => row.texts.reduce((n, s) => n + (s?.length ?? 0) + 1, 0) + row.key.length
   + (row.end ? row.end.length + 1 : 0)
   + (row.toggle ? row.toggle.length + 1 : 0)
   + (row.view ? `go:${row.view}`.length : 0)
   + (row.pick ? `use:${row.pick}`.length : 0)
+  + (row.choose === undefined ? 0 : lineButton(row.choose).length)
   + (row.href ? row.href.length + 6 : 0);
 
 /**
@@ -246,24 +271,47 @@ export function guardTitleText(title, issues, root) {
   ].join('\n');
 }
 
+/**
+ * 提交标题、新建分支名、派活说明里写明文档名或代号却对不上文档时给 AI 的说明（N35）。
+ * @param {string} where guard.mjs REF_WHERE 的一项
+ * @param {string[]} issues guard.mjs refProblems 的 deny
+ * @param {string} root 插件根目录
+ */
+export function guardRefText(where, issues, root) {
+  return [
+    t`YUIBoard：这条${tx(where)}里有对不上文档的任务引用，已拦下。先看文档确认真实编号，改好后再执行：`,
+    ...issues.slice(0, GUARD_SHOWN).map((d) => `- ${tx(d)}`),
+    t`编号确实属于别的项目时换个写法（派活说明里可放进行内代码）。约定见 ${conventionFile(root)}`,
+  ].join('\n');
+}
+
+/** 裸数字对不上文档时的提示（N35）：不拦，随工具结果一起给 AI。@param {string[]} hints guard.mjs refProblems 的 hint */
+export const guardHintText = (hints) => [
+  t('YUIBoard：下面的编号在本项目的文档里找不到。如果是本项目的任务，先看文档核对；只用文档里真实存在的编号：'),
+  ...hints.slice(0, GUARD_SHOWN).map((d) => `- ${tx(d)}`),
+].join('\n');
+
 /** 约定要点，一行一条（conventionBrief 与 CONVENTION 片段共用） */
 export const conventionRules = () => [
   t('- 任务行：`- [ ] 编号 标题`；完成写 `[x]`，进行中可写 `[~]`，不用其它复选框；作废写成 `- [x] ~~6 旧方案~~ **【作废 2026-09-01】** 原因`；子任务编号写 `1.1`（父子看编号，不看缩进）。不要用 `### 任务 1：` 这类标题代替任务行。'),
   t('- 分组：`### 里程碑 M1：说明`，代号在文档内唯一。'),
   t('- 依赖：写在任务标题末尾的括号里，如 `（依赖 1、2.1）`、`（依赖 2.1–2.4）`、`（依赖 M1）`、`（依赖 other-spec#3）`。'),
   t('- PR 标题：交付了哪些任务就写进标题，写 `任务 3`、`任务 3.1–3.4` 或里程碑代号；多份文档编号重复时写 `<文档名>#<编号>`；裸数字不算引用。只做了一部分写 `任务 13（部分）`。ADR 简称 `ADR-0033#64` 只在只有一篇 ADR-0033 时可用，否则写完整文档名。'),
+  t('- 任务编号：提到任务编号前先看文档，只用文档里真实存在的编号；不确定就先查，不要凭记忆或推测写。'),
   t('- 任务正文的 Markdown 只用列表、复选框、代码块、引用、表格、加粗、斜体、删除线、行内代码、链接；不要用标题、分隔线、图片、脚注、HTML 标签。'),
 ];
 
 /**
  * 整个面板的内容（design §4、§6）：纯数据进、纯数据出，文字都已翻译、已截断，总量已按 TEXT_BUDGET 裁剪。
- * 调用方先 setLang()。分支线固定「全部」。
+ * 调用方先 setLang()。
  *
  * @param {object} input
  * @param {object|null} input.summary   当前项目的摘要（GET /api/projects/:id/summary），还没拿到为 null
  * @param {object|null} input.projects  GET /api/projects 的响应 { errors, warnings, projects:[{ id, name, branchLines, errors, refreshError }] }
  * @param {string|null} input.projectId 认出 / 手动选的项目
  * @param {'overview'|'pr'|'check'|'diag'} input.view   'pr' 在未接 GitHub 的项目（或还没拿到摘要）时按总览画
+ * @param {{line:string|null}|null} [input.lineChoice] 本会话手动选的分支线，null = 没选过（见 activeLine）
+ * @param {string|null} [input.cwd]     会话当前目录，算默认选中的分支线
  * @param {string[]} input.toggled      与默认相反的折叠键（doc:<docId>、grp:<docId>/<分组>、task:<任务键>、check:<类型>、pr:<review|merge|done>）
  * @param {{keys:string[], recent:boolean, idle?:boolean}|null} input.focus  focusOf 的结果
  * @param {string} input.url            服务地址，如 http://127.0.0.1:4317
@@ -271,7 +319,7 @@ export const conventionRules = () => [
  * @param {Array<{kind:'offline',url:string,message:string}|{kind:'http',status:number,messages:string[]}|{kind:'oversize'}>} input.problems
  *
  * @returns {{ header: Row[], banners: Row[], focus: Row[], body: Row[], more: Row|null }}
- *   Row = { key, kind, level, texts, tones?, end?, endTone?, status?, tone?, band?, gap?, sep?, toggle?, open?, href?, warn?, error?, highlight?, view?, active?, pick? }
+ *   Row = { key, kind, level, texts, tones?, end?, endTone?, status?, tone?, band?, gap?, sep?, toggle?, open?, href?, warn?, error?, highlight?, view?, active?, pick?, choose? }
  *   - key：稳定唯一。任务行 `task:<任务键>`（滚动目标）；可折叠行的 key 就是它的折叠键（doc: / grp: / task: / check:）
  *   - level：缩进层级（0 起）；texts：已翻译、已截断的字符串，按顺序排开（渲染端自定间隔），整行一行显示、放不下截断；
  *     任务标题已去掉 Markdown 记号。tones：与 texts 对位的主题色键（success / warning / inactive / subtle …），缺省按行色
@@ -284,7 +332,8 @@ export const conventionRules = () => [
  *   kind：
  *   - header：title（YUIBoard，项目名不同才跟在后面）、nav（视图按钮：view = 'overview'|'pr'|'check'|'diag'，active = 当前视图；
  *     texts[0] 是视图名，其后各段是计数：PR 是「◑ 等待 review 数」「◕ 等待合并数」（为 0 的不出，未接 GitHub 不出整个按钮），
- *     需要确认是计数，诊断是「⚠ 有问题的项数」）、link（在浏览器打开）、stat（总览数字，一行排开，只在总览）
+ *     需要确认是计数，诊断是「⚠ 有问题的项数」）、link（在浏览器打开）、stat（总览数字，一行排开，只在总览）、
+ *     line（分支线切换行，多条线且有摘要时才有：choose = 线 id，「全部」是 null，active = 选中；数字、任务树、PR、需要确认都按选中的线，聚焦卡片、诊断不筛选）
  *   - banners：banner（warn；超过 5 条时第 6 行合成「另有 N 条错误，见诊断」）
  *   - focus（只在总览）：focusHead（标题行：本会话正在做 / 最近做的 / 当前没有进行中的任务 · 最近做的 · 文档 [· 多久前]）| empty（本会话还没关联到任务）、
  *     focus（主任务：图标、编号、标题，href 常显）、focusLine（状态原因 · 在等）、
@@ -296,24 +345,27 @@ export const conventionRules = () => [
  *     诊断 diag（level 0 是七项与服务端错误，texts[0] 是项名；level 1 是有问题那项的明细行）；认不出项目时 empty + pick（pick = 项目 id）；读取中 empty
  *   - more：预算放不下时的「其余 N 项在浏览器里看」（kind 'more'，带 href），否则 null
  */
-export function paneOf({ summary, projects, projectId, view: wanted, toggled = [], focus, url, now, problems = [] }) {
+export function paneOf({ summary, projects, projectId, view: wanted, lineChoice = null, cwd = null, toggled = [], focus, url, now, problems = [] }) {
   const entry = projects?.projects?.find((p) => p.id === projectId) ?? null;
   const base = trim(url ?? '');
+  const lines = entry?.branchLines ?? [];
+  const line = activeLine(lineChoice, summary, lines, cwd);
+  const scoped = lineSummary(summary, line, lines);
   // 网页没有 PR 视图：PR 视图的「在浏览器打开」去网页的下一步（「等我处理」在那里）
-  const href = (v, key = null, f = null) => `${base}/${hashFor(v === 'pr' ? 'next' : v, projectId, key, null, f)}`;
+  const hrefOn = (l) => (v, key = null, f = null) => `${base}/${hashFor(v === 'pr' ? 'next' : v, projectId, key, l, f)}`;
+  const href = hrefOn(line);
   const github = hasGithub(summary);
   // 未接 GitHub（或还没拿到摘要）时 PR 视图退回总览
   const view = wanted === 'pr' && !github ? 'overview' : wanted;
-  const lines = entry?.branchLines ?? [];
 
   // 项目名与品牌同名（devboard 自己）只写一次
   const name = projectId ? clip(entry?.name ?? projectId, TITLE_MAX) : null;
   const header = [{ key: 'title', kind: 'title', level: 0, texts: name && name.toLowerCase() !== 'yuiboard' ? ['YUIBoard', name] : ['YUIBoard'] }];
   if (projectId) {
-    const n = summary ? checkItems(summary, { line: null }).length : null;
+    const n = summary ? checkItems(scoped, { line }).length : null;
     const w = summary ? diagRows(summary, projects, entry, now).filter((r) => r.level === 0 && r.warn).length : 0;
     // PR 导航的数字：等待 review、等待合并（含待同步）各一段，为 0 的不写；完成不计（owner 已定 21）
-    const pr = github ? prGroups(summary, lines, now).groups : null;
+    const pr = github ? prGroups(scoped, lines, now).groups : null;
     const prCounts = pr ? [['review', 'merged'], ['merge', 'planMode']].filter(([k]) => pr[k].length) : [];
     header.push(
       { key: 'nav:overview', kind: 'nav', level: 0, view: 'overview', active: view === 'overview', texts: [t('总览')] },
@@ -323,9 +375,13 @@ export function paneOf({ summary, projects, projectId, view: wanted, toggled = [
       { key: 'nav:check', kind: 'nav', level: 0, view: 'check', active: view === 'check', texts: n == null ? [t('需要确认')] : [t('需要确认'), String(n)], ...(n && { tones: [null, 'warning'] }) },
       { key: 'nav:diag', kind: 'nav', level: 0, view: 'diag', active: view === 'diag', texts: w ? [t('诊断'), `⚠ ${w}`] : [t('诊断')], ...(w && { tones: [null, 'warning'] }) },
     );
+    if (summary && lines.length > 1) {
+      const tab = (id, name) => ({ key: id === null ? 'tab' : `tab:${id}`, kind: 'line', level: 0, choose: id, active: line === id, texts: [clip(name, TITLE_MAX)] });
+      header.push(tab(null, t('全部')), ...lines.map((l) => tab(l.id, l.name)));
+    }
   }
   header.push({ key: 'open', kind: 'link', level: 0, texts: [t('在浏览器打开')], href: projectId ? href(view) : `${base}/` });
-  if (projectId && summary && view === 'overview') header.push(...statRows(summary));
+  if (projectId && summary && view === 'overview') header.push(...statRows(scoped));
 
   const banners = bannerTexts({ summary, projects, entry, problems, now }).map(({ texts, link }, i) =>
     ({ key: `banner:${i}`, kind: 'banner', level: 0, texts: texts.map((s) => clip(s, NOTE_MAX)), warn: true, ...(link && { href: href(view) }) }));
@@ -340,11 +396,12 @@ export function paneOf({ summary, projects, projectId, view: wanted, toggled = [
   // 还没有摘要：有问题只出顶栏与横幅，否则显示读取中
   if (!summary) return fit({ header, banners, body: problems.length ? [] : [{ key: 'loading', kind: 'empty', level: 0, texts: [t('正在读取看板…')] }], href: href(view) });
 
-  const ctx = { summary, href, toggled: new Set(toggled), focus: focus ?? { keys: [], recent: false }, lines };
+  // 选中一条线后一屏都是这条线，不再写线名（lines 传空）
+  const ctx = { summary: scoped, href, toggled: new Set(toggled), focus: focus ?? { keys: [], recent: false }, lines: line ? [] : lines, line };
   if (view === 'check') return fit({ header, banners, body: checkRows(ctx), href: href('check') });
   if (view === 'pr') return fit({ header, banners, body: prRows({ ...ctx, now }), href: href('pr') });
   if (view === 'diag') return fit({ header, banners, body: diagRows(summary, projects, entry, now), href: href('diag') });
-  const { focusHead, focusItems, focusToggle } = focusCard({ ...ctx, now });
+  const { focusHead, focusItems, focusToggle } = focusCard({ ...ctx, summary, href: hrefOn(null), now }); // 卡片不受筛选影响，链接也不带线
   return fit({ header, banners, focusHead, focusItems, focusToggle, body: treeRows(ctx), href: href('overview') });
 }
 
@@ -522,8 +579,8 @@ function prRows({ summary, toggled, lines, now }) {
 }
 
 // 需要确认（需求 6）：checkItems 按 CONFLICT_TEXT 顺序分组；c 默认折叠；每组最多 30 条
-function checkRows({ summary, href, toggled }) {
-  const all = checkItems(summary, { line: null });
+function checkRows({ summary, href, toggled, line }) {
+  const all = checkItems(summary, { line });
   if (!all.length) return [{ key: 'check:empty', kind: 'empty', level: 0, texts: [t('没有需要确认的事项。')] }];
   const tasks = new Map(summary.docs.flatMap((d) => d.tasks).map((x) => [x.key, x]));
   const prs = new Set(summary.prs.map((p) => p.number));

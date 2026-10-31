@@ -155,7 +155,7 @@ export function extractBranchRefs(branch, { knownCodes = [] } = {}) {
  * 多处 → ambiguous（不猜）；零处 → missing（不静默丢弃，需求 6.7）。重复编号任务不参与（需求 2.8）。
  *
  * 收窄顺序（先命中者生效）：
- *   1. 文本里出现了 docId → 只在这些文档里找（严格：候选里没有这些文档则全部 missing，宁缺不猜）；
+ *   1. 文本里出现了 docId → 只在这些文档里找（严格：候选里没有这些文档则全部 missing，宁缺不猜；代号例外，收窄后没命中时看全部候选）；
  *   2. 会话上下文 docId（design §3.8.3）→ 与候选的交集非空才收窄；
  *   3. conventional-commit scope 命中部分 docId（docId 按 - _ . / 切词后含该 scope）→ 非空才收窄。
  * 完整任务键不走收窄，直接在候选里按键查。
@@ -184,8 +184,12 @@ export function resolveRefs(raw, candidates, ctxDocIds = []) {
     if (hit?.length) add(hit); else missing.push(key);
   }
 
-  const resolveOne = (ref, match) => {
-    const hits = pool.map((doc) => ({ doc, keys: match(doc) })).filter((h) => h.keys.length);
+  const hitsIn = (docs, match) => docs.map((doc) => ({ doc, keys: match(doc) })).filter((h) => h.keys.length);
+  // wide：收窄后没命中时再看全部候选（N35：代号是写明的，「devboard-mvp … N11」里 N11 在 NEXT，不算不存在）。
+  // 裸编号不放宽，放宽会把别的 spec 的同号任务误关联
+  const resolveOne = (ref, match, wide = false) => {
+    let hits = hitsIn(pool, match);
+    if (wide && !hits.length) hits = hitsIn(candidates, match);
     if (hits.length === 1) add(hits[0].keys);
     else if (hits.length > 1) ambiguous.push({ raw: ref, candidates: hits.map((h) => `${h.doc.docId}#${ref}`) });
     else missing.push(ref);
@@ -196,7 +200,7 @@ export function resolveRefs(raw, candidates, ctxDocIds = []) {
       const groupIds = new Set(doc.groups.filter((g) => g.code && lower(g.code) === lower(c)).map((g) => g.id));
       // 代号 = 该分组全部未作废任务（子任务与父任务同组平铺，按组取即含子任务）。
       return doc.tasks.filter((t) => groupIds.has(t.groupId) && !t.void && !t.duplicate).map((t) => t.key);
-    });
+    }, true);
   }
   return { tasks, ambiguous, missing };
 }

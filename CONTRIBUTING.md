@@ -139,5 +139,6 @@ Run these against a real repository before a release or after a large change. Th
     - In a session in the watched repository, ask Claude what it was told about YUIBoard: it repeats the convention summary.
     - Ask it to add `### 任务 9：…` to a watched `tasks.md`: the write is blocked with the line and the suggested `- [ ] 9 …`, and Claude writes the task line instead. Edit a line next to an existing issue: not blocked.
     - Ask it to run `gh pr create --draft --title "fix: 任务 999"` (or `gh pr edit` on a PR in a scratch repository): blocked with "task that does not exist"; a title naming an existing task passes.
+    - Ask it to commit with the title `feat: <doc>#999` in the watched repository: blocked. The same commit in an unrelated repository passes, and a bare `Task 999` passes with a hint to Claude.
     - Set `guard` to `off`: neither the summary nor the blocking happens.
     - Run `devboard-fix-convention`: every change is shown and applied only after you confirm it; "skip" leaves the item on the Diagnostics page.

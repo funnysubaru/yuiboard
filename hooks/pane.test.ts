@@ -437,6 +437,37 @@ for (const surface of SURFACES) {
     await ui.unmount()
   })
 
+  test(`[${surface}] 分支线切换行：默认选所在工作区的线，按下切换，换会话重新算；单线项目没有`, async ($, on) => {
+    const w = world(on, { cwd: '/w/one/side/src', p1: { ...summary({ 'a#1': RUN('S1') }), workspaces: [{ id: 'main', path: '/w/one' }, { id: 'side', path: '/w/one/side' }] } })
+    w.server['/api/projects'] = { status: 200, etag: '', text: JSON.stringify({ errors: [], warnings: [], projects: [{ id: 'p1', name: 'One', errors: [],
+      branchLines: [{ id: 'first', name: 'First', docFilter: '^a$' }, { id: 'side', name: 'Side', docFilter: '^b$' }] }] }) }
+    await start($, w)
+    const ui = await mount($, w, surface)
+    expect(await text(ui, 'lines')).toContain('First')
+    expect(await keys(ui)).toEqual(expect.arrayContaining(['doc:b']))
+    expect(await keys(ui)).not.toContain('doc:a')
+    await ui.press({ key: 'line' })
+    expect(get(w, 'line')).toEqual({ line: null })
+    await ui.redraw()
+    expect(await keys(ui)).toEqual(expect.arrayContaining(['doc:a', 'doc:b']))
+    w.id = 'S2'
+    await tick(w)
+    expect(get(w, 'line')).toBe(null)
+    await ui.redraw()
+    expect(await keys(ui)).not.toContain('doc:a')
+    await ui.unmount()
+  })
+
+  test(`[${surface}] 单线项目没有分支线切换行`, async ($, on) => {
+    const w = world(on)
+    await start($, w)
+    put(w, 'picked', 'p1')
+    await tick(w)
+    const ui = await mount($, w, surface)
+    expect(await keys(ui)).not.toContain('lines')
+    await ui.unmount()
+  })
+
   test(`[${surface}] 认不出项目时列项目按钮，按下后认成该项目`, async ($, on) => {
     const w = world(on, { id: 'S9', cwd: '/w/elsewhere' })
     await start($, w)

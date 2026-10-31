@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isTaskDoc, prTitles, commandTexts, docIssues, titleIssues, applyEdit } from '../src/guard.mjs';
+import { isTaskDoc, prTitles, commandTexts, commandDir, docIssues, titleIssues, refProblems, branchWords, withoutCode, REF_WHERE, applyEdit } from '../src/guard.mjs';
 import { parseTasksDoc, parseAdrDoc } from '../src/parse.mjs';
 import { conventionBrief } from '../hooks/model.mjs';
 import { setLang } from '../web/i18n.mjs';
@@ -218,6 +218,75 @@ test('titleIssues：分支线——不知道 base 时任一条线下没问题就
   assert.deepEqual(titleIssues('fix: 任务 3', [PLAN, OTHER], lines), []);
   assert.deepEqual(titleIssues('fix: 任务 1', [PLAN, OTHER], lines, 'main'), []);
   assert.match(titleIssues('fix: 任务 1', [PLAN, OTHER], lines, 'v2')[0], /不存在的任务：1/);
+});
+
+// ---- refProblems：提交标题、分支名、派活说明（N35） ----
+const NEXT = parsed('NEXT', '### 里程碑 N1：一\n- [ ] 1 一\n- [ ] 1.1 子\n### 里程碑 N2：二\n- [ ] 2 二\n- [ ] 2 重复的二\n');
+const check = (t, docs = [NEXT]) => refProblems(t, docs, REF_WHERE.commit);
+
+test('refProblems：写明文档名或代号却对不上的拦；裸数字只提示', () => {
+  assert.match(check('feat: NEXT#99').deny[0], /不存在的任务：NEXT#99/);
+  assert.match(check('feat: N99 收尾').deny[0], /N99/);
+  assert.match(check('fix: next#1').deny[0], /建议写成「NEXT#1」/);
+  assert.deepEqual(check('feat: 任务 99'), { deny: [], hint: [check('feat: 任务 99').hint[0]] });
+  assert.match(check('feat: 任务 99').hint[0], /任务 99/);
+});
+
+test('refProblems：真实的、别的仓库的、歧义的、重复编号、没有 ADR 的项目里的 ADR 号都不管', () => {
+  for (const t of ['feat: NEXT#1', 'feat: N1', 'feat: 任务 1.1', '修 other-vendor#127', 'chore: 同步 main', 'fix: NEXT#2', '升 node24 与 h2', 'ADR-0099#3 的做法']) {
+    assert.deepEqual(check(t), { deny: [], hint: [] }, t);
+  }
+  assert.deepEqual(check('feat: ADR-0033#64', [adr('ADR-0033-a'), adr('ADR-0033-b')]).deny, [], '简称多篇是歧义，不是编造');
+  assert.equal(check('feat: ADR-0099#3', [NEXT, adr('ADR-0033-a')]).deny.length, 1, '项目真有 ADR 时才算');
+});
+
+test('branchWords：分支名切成词，代号大小写不敏感', () => {
+  assert.equal(check(branchWords('feat/n99-real-numbers')).deny.length, 1);
+  for (const b of ['feat/n1-x', 'fix/parser_h2', 'feat/plain-branch']) assert.deepEqual(check(branchWords(b)).deny, [], b);
+});
+
+test('withoutCode：行内代码与代码块不查', () => {
+  assert.deepEqual(check(withoutCode('如 `N99` 这种写法\n```\nNEXT#99\n```\n')).deny, []);
+  assert.equal(check(withoutCode('做 N99')).deny.length, 1);
+  for (const t of ['参考 ``NEXT#99`` 这种错误写法', '``含 ` 的 NEXT#99``', '~~~sh\nNEXT#99\n~~~', '~~~\nNEXT#99', '````\n```\nNEXT#99\n````',
+    '日志：\n\n    NEXT#99\n\n    N99', '\tNEXT#99', '    NEXT#99']) {
+    assert.deepEqual(check(withoutCode(t)).deny, [], t);
+  }
+});
+
+test('withoutCode：代码之外的无效引用照拦，配不上的反引号不算代码', () => {
+  for (const t of ['``a`` 做 NEXT#99', '```\nx\n```\n做 NEXT#99', '~~~\nx\n~~~\n做 NEXT#99', '    x\n\n做 NEXT#99', '前文\n    NEXT#99',
+    '不配对的 `` 做 NEXT#99 `', '段一 `x\n\n做 NEXT#99\n\n段三 y`', '转义 \\`NEXT#99 `']) {
+    assert.equal(check(withoutCode(t)).deny.length, 1, t);
+  }
+});
+
+test('commandTexts 的 dir：cd、git -C 累加；读不出的算判断不了（N35）', () => {
+  const dirs = (c) => commandTexts(c).map((x) => x.dir);
+  assert.deepEqual(dirs('git commit -m x'), ['']);
+  assert.deepEqual(dirs('cd /a && git commit -m x; cd b && git switch -c y'), ['/a', '/a/b']);
+  assert.deepEqual(dirs('cd /a && git -C b commit -m x'), ['/a/b']);
+  assert.deepEqual(dirs('git -C /a -C b commit -m x'), ['/a/b']);
+  for (const c of ['cd ~/x && git commit -m x', 'cd "$D" && git commit -m x', 'cd - && git commit -m x', 'git -C "$D" commit -m x',
+    '(cd /a && git status); git commit -m x', 'pushd /a; git commit -m x', 'GIT_DIR=/a git commit -m x', 'git --git-dir=/a commit -m x']) {
+    assert.deepEqual(dirs(c), [null], c);
+  }
+  // 作用域看不透的（PR #60 review）：Git 路径变量留到之后、管道或后台里的 cd、后台任务之后、source、命令替换
+  for (const c of ['export GIT_DIR=/o/.git GIT_WORK_TREE=/o; git commit -m x', 'export GIT_DIR=$D; git commit -m x', 'GIT_DIR=/o/.git; git commit -m x',
+    'declare -x GIT_WORK_TREE=/o\ngit commit -m x', 'cd /a | cat; git commit -m x', 'echo | cd /a; git commit -m x', 'cd /a & git commit -m x',
+    'cd /a && make & git commit -m x', 'npm run dev & git commit -m x', 'source ./env.sh; git commit -m x', 'x=$(cd /a; git commit -m x)']) {
+    assert.deepEqual(dirs(c), [null], c);
+  }
+  // 看得透的照旧：前缀只管这一条；提交自己在管道里、重定向里的 &、|| 兜底都不影响定位
+  assert.deepEqual(dirs('GIT_DIR=/o git status; git commit -m x'), ['']);
+  assert.deepEqual(dirs('cd /a && git commit -m x 2>&1 | tail -1; git switch -c y'), ['/a', '/a']);
+  assert.deepEqual(dirs('cd /a || exit 1; git commit -m x &> log; git switch -c y'), ['/a', '/a']);
+  assert.deepEqual(dirs('git log | head -1; git commit -m x'), ['']);
+  assert.equal(commandDir('/w/x', 'a/../b'), '/w/x/b');
+  assert.equal(commandDir('/w/x', '/o'), '/o');
+  assert.equal(commandDir('/w/x', ''), '/w/x');
+  assert.equal(commandDir('/w/x', null), null);
+  assert.equal(commandTexts('gh pr edit 3 -t x')[0].pr, true);
 });
 
 test('mod 能到达的模块都不 import node:（mod 只认插件内相对路径与 claude-code；CI 不装 Claude Code，validate 管不到，N27 design §2）', () => {

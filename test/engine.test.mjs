@@ -1151,3 +1151,13 @@ test('日文前置列表：「、」一侧没有关系词时只是列举，条�
   const d = inline('- [ ] 1 one\n- [ ] 2 two\n- [ ] 3 three\n- [ ] 4 four（1 に依存、3 と並行）\n');
   assert.deepEqual(d.relations.map((r) => r.kind).sort(), ['dep', 'parallel']);
 });
+
+test('N35 会话引用问题只对人发的消息报：派活说明、命令对不上不报，人发的照报', () => {
+  const docs = [withPath(inline(SIMPLE))];
+  const b = sBoard(docs, [session('s7', [
+    { ...say(docs, '实现任务 99', at(50), at(40), 'dispatch'), toolUseId: 'tg' },
+    say(docs, 'fix: 任务 98', at(39), at(30), 'command'),
+    say(docs, '看看任务 97', at(20), at(10)),
+  ])]);
+  assert.deepEqual(b.conflicts.filter((c) => c.type === 'h').map((c) => /97/.test(c.detail)), [true]);
+});
