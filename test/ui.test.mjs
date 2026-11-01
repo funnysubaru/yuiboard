@@ -1380,7 +1380,7 @@ const SESS = `# 会话演示
 `;
 const ago55 = (min) => new Date(NOW.getTime() - min * 6e4).toISOString();
 let sigLine = 0;
-const prompt55 = (text, from, until = from) => ({ kind: 'prompt', at: ago55(from), until: ago55(until), file: 'r/s.jsonl', line: ++sigLine,
+const prompt55 = (text, from, until = from) => ({ kind: 'prompt', at: ago55(from), until: ago55(until), file: 'r/s.jsonl', line: ++sigLine, worked: true,
   refs: extractRefs(text, { knownDocIds: ['sess-demo'], knownCodes: [] }), snippet: text });
 const sess55 = (id, title, lastSummary, signals) => ({ source: 'claude-code', id, files: ['r/s.jsonl'], cwds: ['/ws/repo'], branches: [],
   title, firstAt: signals[0].at, lastAt: signals.map((x) => x.until).sort().at(-1), lastSummary, signals, aiOnlyMentions: 0, brokenLines: 0 });
@@ -1839,7 +1839,7 @@ test('需要确认：导航在「下一步」之后，带警示计数（= 本视
 test('需要确认：a–o 每类一组（中文类型名 + 条数），组内一条一个框「类型 · 对象」+ 说明原文；c 默认收起、其余展开', () => {
   const root = renderCheck(checkBoard(), checkState());
   assert.deepEqual(groupsOf(root).map((g) => g.getAttribute('data-type')), [...'abcdefghijklmno']);
-  assert.equal(new Set(Object.values(CONFLICT_TEXT)).size, 15);
+  assert.equal(new Set(Object.values(CONFLICT_TEXT)).size, 17);
   for (const g of groupsOf(root)) {
     const type = g.getAttribute('data-type');
     const boxes = g.querySelectorAll('div.box');
@@ -2448,7 +2448,7 @@ test('N1：任务抽屉与统计区分关联 PR 合并和文档确认完成', ()
 });
 
 test('「任务 N（部分）」：任务抽屉的状态依据写明部分 PR 已合并，PR 框的来源标「部分」', () => {
-  const p = { number: 77, title: 'fix: 探针', body: '任务 1（部分）', url: '', state: 'MERGED', isDraft: false, baseRefName: 'main', headRefName: 'b77',
+  const p = { number: 77, title: 'fix: 探针', body: 'Task: 任务 1（部分）', url: '', state: 'MERGED', isDraft: false, baseRefName: 'main', headRefName: 'b77',
     labels: [], createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-22T00:00:00Z', readyAt: null, mergedAt: '2026-09-22T00:00:00Z',
     closedAt: null, mergeCommit: 'a'.repeat(40) };
   const board = computeBoard([planDoc('p', '# P\n\n- [ ] 1 甲\n')], [p], [], [], { 77: { state: 'synced', reason: null } }, { id: 'demo' }, NOW);
@@ -3010,4 +3010,53 @@ test('日期选择：日历按界面语言、中文周一起；今天之后禁�
   assert.equal(again.querySelector('[aria-label=起始日]').getAttribute('aria-expanded'), 'true');
   assert.equal(again.querySelector('.dptitle').textContent, '2026年8月');
   assert.equal(again.querySelector('[data-date=2026-08-05]').getAttribute('tabindex'), '0');
+});
+
+test('36.11 下一步：等 owner 单列在可开工栏里，不算进可开工数字', () => {
+  const b = computeBoard([planDoc('nx', '- [ ] 1 需 owner 手测\n- [ ] 2 普通\n')], [], [], [], {}, { id: 'demo' }, NOW);
+  const col = renderNext(b, relState(null, { view: 'next' })).querySelector('.cols').children[0];
+  assert.equal(col.querySelector('h2').textContent, '▶ 可开工1');
+  const box = col.querySelector('.owner-wait');
+  assert.equal(box.querySelector('.bl').textContent, '等 owner · 1');
+  assert.equal(box.querySelector('.tt').textContent, '需 owner 手测');
+});
+
+test('36.8 需要确认：c 与 p 分两组，p 默认也收起；任务行标「文档有 PR」，不算不一致', () => {
+  const pr = { number: 7, title: 'feat: nx 上线', body: '', url: '', state: 'MERGED', isDraft: false, baseRefName: 'main', headRefName: 'b', labels: [],
+    createdAt: NOW, updatedAt: NOW, mergedAt: NOW, closedAt: null, readyAt: null };
+  const b = computeBoard([planDoc('nx', '- [x] 1 一\n- [x] 2 二\n'), planDoc('zz', '- [x] 1 单独\n')], [pr], [], [], { 7: { state: 'synced' } }, { id: 'demo' }, NOW);
+  const root = renderCheck(b, relState(null, { view: 'check' }));
+  const groups = root.querySelectorAll('.cgrp');
+  assert.deepEqual(groups.map((g) => g.getAttribute('data-type')), ['c', 'p']);
+  assert.deepEqual(groups.map((g) => g.getAttribute('open')), [null, null]);
+  assert.equal(groups[1].querySelector('summary').textContent, '文档有 PR，未写到任务（2）');
+  const row = renderOverview(b, relState(null));
+  const flags = row.querySelectorAll('.flag').map((x) => x.textContent);
+  assert.ok(flags.includes('文档有 PR'));
+  assert.ok(!flags.includes('⚠ 不一致'));
+});
+
+test('36.9 需要确认：规划文档可能没回写按文档列', () => {
+  const pr = { number: 7, title: 'feat: nx 上线', body: '', url: '', state: 'MERGED', isDraft: false, baseRefName: 'main', headRefName: 'b', labels: [],
+    createdAt: NOW, updatedAt: NOW, mergedAt: NOW, closedAt: null, readyAt: null };
+  const b = computeBoard([planDoc('nx', '- [ ] 1 一\n')], [pr], [], [], { 7: { state: 'synced' } }, { id: 'demo' }, NOW);
+  const root = renderCheck(b, relState(null, { view: 'check' }));
+  const box = root.querySelectorAll('.cgrp').find((g) => g.getAttribute('data-type') === 'q').querySelector('.box');
+  assert.match(box.textContent, /规划文档可能没回写 · nx/);
+});
+
+test('36.12 总览：选「全部」且有同一份文档的两条线时注明含重复，选了线不注明', () => {
+  const main = planDoc('ADR-0033-x', '- [ ] 1 一\n');
+  const next = { ...planDoc('next:ADR-0033-x', '- [ ] 1 一\n'), alias: 'ADR-0033-x', ref: 'origin/next' };
+  const b = computeBoard([main, next], [], [], [], {}, { id: 'demo' }, NOW);
+  const note = (s) => renderOverview(b, s).querySelectorAll('.sub').map((x) => x.textContent).filter((x) => x.includes('重复'));
+  assert.deepEqual(note(relState(null)), ['「全部」含重复：1 份文档在两条线各算一次，共 1 个任务']);
+});
+
+test('36.7 抽屉：只提到的会话注明不算进行中', () => {
+  const sig = { kind: 'prompt', at: NOW, until: NOW, file: 'r/s.jsonl', line: 1, snippet: '（虚构）', refs: { keys: [], nums: ['1'], codes: [], docIds: [], scopes: [], partial: [], unknown: [], spans: [] } };
+  const s = { source: 'claude-code', id: 's', files: [], cwds: [], branches: [], title: 's', firstAt: NOW, lastAt: NOW, lastSummary: null, signals: [sig], aiOnlyMentions: 0, brokenLines: 0 };
+  const b = computeBoard([planDoc('nx', '- [ ] 1 一\n')], [], [s], [], {}, { id: 'demo' }, NOW);
+  const d = renderDrawer(b, relState('nx#1'));
+  assert.ok(d.flat?.().some((n) => n?.textContent?.includes('只提到，没有实际工作')) ?? d.textContent.includes('只提到，没有实际工作'));
 });

@@ -67,11 +67,11 @@ const SPEC = {
   top: ['projectId', 'freshness', 'degraded', 'workspaces', 'diagnostics', 'defaults', 'stats', 'recentClosedPrDays', 'docs', 'tasks', 'conflicts', 'prs', 'sessions'],
   doc: ['docId', 'title', 'path', 'kind', 'archived', 'workspaceId', 'sourceType', 'sourceLabel', 'parse', 'groups', 'alias', 'adr', 'tasks'],
   docTask: ['key', 'number', 'title', 'checkbox', 'void', 'docId', 'groupId', 'parentKey', 'duplicate'],
-  view: ['key', 'status', 'rule', 'docOnly', 'syncPending', 'syncUnchecked', 'inProgressBy', 'activity', 'childSummary', 'next', 'prs', 'sessions', 'deps'],
+  view: ['key', 'status', 'rule', 'docOnly', 'prRecorded', 'docPrs', 'syncPending', 'syncUnchecked', 'inProgressBy', 'activity', 'childSummary', 'next', 'prs', 'sessions', 'deps'],
   prLink: ['pr', 'partial', 'removedManually'],
   sessionLink: ['sessionId', 'activity', 'firstAt', 'lastAt', 'evidenceAt'],
   deps: ['on', 'unmet', 'external'],
-  conflict: ['type', 'taskKey', 'pr', 'sessionId', 'detail', 'source'],
+  conflict: ['type', 'taskKey', 'pr', 'sessionId', 'docId', 'detail', 'source'],
   pr: ['number', 'title', 'branchLine', 'tasks', 'state', 'isDraft', 'url', 'createdAt', 'readyAt', 'mergedAt', 'localSync'],
   session: ['id', 'source', 'title'],
 };
@@ -156,7 +156,7 @@ test('摘要与完整看板跑 overallStats / checkItems / statusWhy 结果完�
   assert.ok(whys.size >= 6, `状态原因种类够多（${whys.size}）`);
 });
 
-test('摘要的 PR 分组与网页「等我处理」（engine waitingList）一致（N33）', () => {
+test('摘要的 PR 分组与网页「等我处理」（engine waitingList）一致', () => {
   const board = fixtureBoard();
   const sum = JSON.parse(JSON.stringify(summarize(board)));
   const KIND = { draft: 'review', ready: 'merge', unsynced: 'sync' };

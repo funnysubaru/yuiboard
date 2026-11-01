@@ -4,7 +4,7 @@
 import { t, tx, getLang } from '../web/i18n.mjs';
 import {
   STATUS_UI, CONFLICT_TEXT, RULE_TEXT, SESSION_SOURCE_TEXT, HTML_LANG,
-  hashFor, refLabel, overallStats, checkItems, statusWhy, docLine, degradedBanners, docHasIssues, ago,
+  hashFor, refLabel, overallStats, duplicateDocs, DOC_ONLY, checkItems, statusWhy, docLine, degradedBanners, docHasIssues, ago,
   prKind, shortList, lineName, waited, day,
 } from '../web/app.mjs';
 import { mdText } from '../web/md.mjs'; // 一行显示的标题去掉 Markdown 记号，与网页悬停 / SVG 同一解析（N12）
@@ -41,7 +41,7 @@ export function pickProject(entries, sessionId, cwd) {
 /**
  * 当前会话的聚焦任务（需求 5.2，owner 2026-10-12 改）：只认 devboard 的关联结果，只算未归档文档里的任务。
  * 关联里有运行中且没完成的 → 全部列出，按下面的 rank 排，keys[0] 是卡片上展开的主任务；
- * 否则取 rank 最前的一个，recent: true；这时关联的任务全都完成或作废，再标 idle: true（N32）。at = 主任务的 lastAt。
+ * 否则取 rank 最前的一个，recent: true；这时关联的任务全都完成或作废，再标 idle: true。at = 主任务的 lastAt。
  */
 export function focusOf(summary, sessionId) {
   const links = new Map();
@@ -52,7 +52,7 @@ export function focusOf(summary, sessionId) {
   const tasks = summary.docs.filter((d) => !d.archived).flatMap((d) => d.tasks);
   const parents = new Set(tasks.map((t) => t.parentKey).filter(Boolean));
   const linked = tasks.filter((t) => links.has(t.key)).map((t) => ({ key: t.key, checkbox: t.checkbox, ...links.get(t.key) }));
-  // 先看最近一次直接点到它的时间（evidenceAt，N32）：续活动会让早先点名的任务和后来真正在做的任务 lastAt 一样晚，
+  // 先看最近一次直接点到它的时间（evidenceAt）：续活动会让早先点名的任务和后来真正在做的任务 lastAt 一样晚，
   // 只看 lastAt 时早点名的胜出（2026-10-16 实测：全部做完后仍显示 N9）。时间写法不统一（有无毫秒），按时间比。
   // 再看 lastAt；同一时刻（一个 PR 连上的几十个任务时间都一样）依次看：点到过的（named）在前、
   // 没勾选的在前、没有子任务的在前（具体的那一步比笼统的父任务有用），再按文档顺序（owner 2026-10-12 定；
@@ -61,7 +61,7 @@ export function focusOf(summary, sessionId) {
   const rank = (l, i) => [-time(l.evidenceAt ?? l.lastAt), -time(l.lastAt), l.named ? 0 : 1, l.checkbox === 'open' ? 0 : 1, parents.has(l.key) ? 1 : 0, i];
   const byRank = (a, b) => a[0].reduce((d, x, j) => d || x - b[0][j], 0);
   const latest = (list) => list.map((l, i) => [rank(l, i), l]).sort(byRank).map((r) => r[1]);
-  // 已完成、作废的任务不算「正在做」（N32）：会话做完以后还在续活动，别一直写「正在做」一个早已完成的任务
+  // 已完成、作废的任务不算「正在做」：会话做完以后还在续活动，别一直写「正在做」一个早已完成的任务
   const finished = (l) => !l.status || l.status === 'done';
   const running = latest(linked.filter((l) => l.activity === 'running' && !finished(l)));
   if (running.length) return { keys: running.map((l) => l.key), recent: false, at: running[0].lastAt ?? null };
@@ -86,7 +86,7 @@ export function focusPath(summary, key) {
 }
 
 /**
- * 当前选中的分支线（N34，owner 已定 22），null = 全部。手动选的优先（choice：{ line: 线 id }，{ line: null } = 全部，null = 没选过；不用字符串当「全部」，线 id 可以就叫 all）；
+ * 当前选中的分支线（owner 已定 22），null = 全部。手动选的优先（choice：{ line: 线 id }，{ line: null } = 全部，null = 没选过；不用字符串当「全部」，线 id 可以就叫 all）；
  * 没选过看会话所在工作区：摘要 workspaces[] 里包含 cwd 的最深一个，id 等于某条线的 id 就选它（配了 workspace 的线）；
  * 主工作区（workspaces[0]，含它下面的 worktree）对应 base 为 main 的线；都不中是全部。不按 id 认主工作区：线 id 也可以叫 repo。
  * 单线项目、还没拿到摘要时不筛选。
@@ -134,7 +134,7 @@ const tinted = (r) => !['todo', 'void', undefined].includes(r.band ?? r.tone);
 const toneOf = (v) => (!v?.status ? 'void'
   : v.status === 'in_progress' ? (v.activity === 'stale' ? 'stale' : 'run')
   : v.status === 'awaiting_merge' && v.syncPending?.length ? 'sync' : TONE[v.status]);
-// 任务行的状态文字（N31，owner 2026-10-15）：写在圆圈右边、编号前面，按行的色调分档，与颜色一一对应。
+// 任务行的状态文字（owner 2026-10-15）：写在圆圈右边、编号前面，按行的色调分档，与颜色一一对应。
 // 与 STATUS_UI 同法：模块加载时按中文求值，显示时再套 t()
 const WORD = { run: t('进行中'), stale: t('停滞中'), review: t('等待 review'), merge: t('等待合并'), sync: t('待同步'),
   done: t('完成'), todo: t('未开始'), void: t('作废') };
@@ -146,7 +146,7 @@ const apart = (list) => list.map((r, i) => (i === 0 ? r
   : r.band ? { ...r, sep: true }
   : tinted(r) && tinted(list[i - 1]) ? { ...r, gap: true } : r));
 
-// ---- PR（N33，owner 已定 21） ----
+// ---- PR（owner 已定 21） ----
 // 分组口径同网页「等我处理」（engine waitingList）：prKind → 行的色调；关闭未合并的不列
 const PR_TONE = { draft: 'review', ready: 'merge', unsynced: 'sync', merged: 'done' };
 const PR_STATUS = { review: 'in_review', merge: 'awaiting_merge', sync: 'awaiting_merge', done: 'done' };
@@ -272,7 +272,7 @@ export function guardTitleText(title, issues, root) {
 }
 
 /**
- * 提交标题、新建分支名、派活说明里写明文档名或代号却对不上文档时给 AI 的说明（N35）。
+ * 提交标题、新建分支名、派活说明里写明文档名或代号却对不上文档时给 AI 的说明。
  * @param {string} where guard.mjs REF_WHERE 的一项
  * @param {string[]} issues guard.mjs refProblems 的 deny
  * @param {string} root 插件根目录
@@ -285,7 +285,7 @@ export function guardRefText(where, issues, root) {
   ].join('\n');
 }
 
-/** 裸数字对不上文档时的提示（N35）：不拦，随工具结果一起给 AI。@param {string[]} hints guard.mjs refProblems 的 hint */
+/** 裸数字对不上文档时的提示：不拦，随工具结果一起给 AI。@param {string[]} hints guard.mjs refProblems 的 hint */
 export const guardHintText = (hints) => [
   t('YUIBoard：下面的编号在本项目的文档里找不到。如果是本项目的任务，先看文档核对；只用文档里真实存在的编号：'),
   ...hints.slice(0, GUARD_SHOWN).map((d) => `- ${tx(d)}`),
@@ -409,6 +409,7 @@ export function paneOf({ summary, projects, projectId, view: wanted, lineChoice 
 // 再是进行中 / 等待 review / 等待合并 / 停滞 / 待同步（为 0 的不出）与可开工
 function statRows(summary) {
   const all = overallStats(summary);
+  const dup = duplicateDocs(summary);
   const filled = all.ratio == null ? 0 : Math.round(all.ratio * BAR);
   const count = (s) => all.counts[s] ? [{ key: `stat:${s}`, kind: 'stat', level: 0, status: s, texts: [`${icon(s)} ${t(WORD[s === 'in_progress' ? 'run' : TONE[s]])} ${all.counts[s]}`] }] : [];
   return [
@@ -418,6 +419,7 @@ function statRows(summary) {
     ...(all.stale ? [{ key: 'stat:stale', kind: 'stat', level: 0, warn: true, tones: ['error'], texts: [t`${all.stale} 停滞`] }] : []),
     ...(all.syncPending ? [{ key: 'stat:sync', kind: 'stat', level: 0, warn: true, tones: ['suggestion', 'suggestion'], texts: [t('已合并·待同步到本地'), String(all.syncPending)] }] : []),
     { key: 'stat:ready', kind: 'stat', level: 0, texts: [t('可开工'), String(all.ready)] },
+    ...(dup ? [{ key: 'stat:dup', kind: 'stat', level: 0, tones: ['subtle'], texts: [t`含重复 ${dup.tasks}`] }] : []),
   ];
 }
 
@@ -540,7 +542,7 @@ function treeRows({ summary, href, toggled, focus, lines }) {
   return rows.length ? rows : [{ key: 'empty', kind: 'empty', level: 0, texts: [t('没有可显示的规划文档')] }];
 }
 
-// PR 视图（N33，owner 已定 21 的 A；面板稿 ui-mockup-v3-pr.html）：等待 review、等待合并默认展开，完成默认收起、展开最多 3 个。
+// PR 视图（owner 已定 21 的 A；面板稿 ui-mockup-v3-pr.html）：等待 review、等待合并默认展开，完成默认收起、展开最多 3 个。
 // 每个 PR 两行：状态圆圈与状态文字、编号（链接到 GitHub）、标题；灰字写分支线（多条时）· 关联任务 · 等了多久
 function prRows({ summary, toggled, lines, now }) {
   if (summary.degraded?.noPrData) return [{ key: 'pr:empty', kind: 'empty', level: 0, texts: [t('未包含 PR 信息（还没成功读到 GitHub）')] }];
@@ -591,7 +593,7 @@ function checkRows({ summary, href, toggled, line }) {
     const items = all.filter((c) => c.type === type);
     if (!items.length) continue;
     const key = `check:${type}`;
-    const open = (type !== 'c') !== toggled.has(key);
+    const open = !DOC_ONLY.has(type) !== toggled.has(key);
     const name = t(CONFLICT_TEXT[type]);
     rows.push({ key, kind: 'checkGroup', level: 0, texts: [name], end: String(items.length), toggle: key, open });
     if (!open) continue;
@@ -604,6 +606,7 @@ function checkRows({ summary, href, toggled, line }) {
       const s = task ? views.get(task.key)?.status : null;
       const texts = task ? [mark(views.get(task.key)), task.number, `${clip(mdText(task.title), TITLE_MAX)} · ${detail}`]
         : c.pr != null ? ['#', String(c.pr), detail]
+        : c.docId ? ['◇', `${c.docId} · ${detail}`]
         : ['◇', `${t`会话 ${clip(sessions.get(c.sessionId)?.title ?? c.sessionId, TITLE_MAX)}`} · ${detail}`];
       rows.push({ key: `${key}:${i}`, kind: 'checkItem', level: 1, ...(target && { href: href('check', target) }),
         ...(task ? { status: s ?? 'void', tone: toneOf(views.get(task.key)) } : { tones: ['subtle'] }), texts });

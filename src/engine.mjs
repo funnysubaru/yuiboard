@@ -3,7 +3,7 @@
 // 已接：文档信号（任务 1.4）、依赖 / 下一步 / 文档侧冲突（任务 2.4）、PR 关联与五态（任务 3.4）、会话关联（任务 5.3）、
 // 手动关联（任务 4.1，叠加在 linkPrs 里）。
 
-import { extractRefs, extractBranchRefs, resolveRefs, aliasMap, unalias, hasRefs, refOptions, checkRefs, onlyDuplicates, brief } from './refs.mjs';
+import { extractRefs, extractBranchRefs, resolveRefs, aliasMap, unalias, hasRefs, refOptions, checkRefs, onlyDuplicates, brief, taskLines, bodyProse, titleRefs, isRecordTitle } from './refs.mjs';
 import { classifyBranchLine } from './github.mjs';
 import { docIssuesOf } from './guard.mjs';
 import { layoutGantt, summarizeGantt } from './gantt.mjs';
@@ -39,6 +39,7 @@ export function computeBoard(docs, prs, sessions, manual, sync, config, now, def
   const linksOf = new Map();
   for (const l of linked.links) (linksOf.get(l.taskKey) ?? linksOf.set(l.taskKey, []).get(l.taskKey)).push(l);
   const sess = linkSessions(docs, sessions, prs, linked.prs, config);
+  const mentionsOf = Map.groupBy(linked.mentions, (m) => m.taskKey);
   const sessOf = new Map();
   for (const l of sess.links) (sessOf.get(l.taskKey) ?? sessOf.set(l.taskKey, []).get(l.taskKey)).push(l);
   // N28（owner 2026-10-13）：未接 GitHub 的项目本来就没有 PR，已勾选照旧算完成，但不标「仅文档确认」、不报冲突 c。
@@ -52,7 +53,9 @@ export function computeBoard(docs, prs, sessions, manual, sync, config, now, def
     const counted = links.map((l) => prByNum.get(l.pr));
     const st = deriveStatus(t, counted, sync, sl, partialMerged);
     if (noGithub) st.docOnly = false;
-    return Object.assign(taskView(t, st, links, prByNum), { sessions: sl });
+    // 强关联优先：手动关联、标题关联过的 PR 不再算「提到」
+    const mentionedPrs = (mentionsOf.get(t.key) ?? []).filter((m) => !links.some((l) => l.pr === m.pr)).map(({ pr, evidence }) => ({ pr, evidence }));
+    return Object.assign(taskView(t, st, links, prByNum), { sessions: sl, mentionedPrs });
   });
   markActivity(views, new Date(now).getTime(), defaults);
 
@@ -68,14 +71,29 @@ export function computeBoard(docs, prs, sessions, manual, sync, config, now, def
     if (views[i].status === 'done') sum.done++;
   });
 
+  // 「仅文档确认」= 哪里都没有 PR 记录（owner 2026-11-01）：描述正文提到过，或父任务的子任务都有记录，都不算。
+  // 关闭未合并的不算记录；作废的子任务不看
+  const kids = Map.groupBy(tasks.filter((t) => t.parentKey && !t.void), (t) => t.parentKey);
+  const recorded = (key) => {
+    const v = byKey.get(key);
+    const sub = kids.get(key) ?? [];
+    return v.mentionedPrs.length > 0 || v.prs.some((l) => prByNum.get(l.pr)?.state !== 'CLOSED') || (sub.length > 0 && sub.every((t) => recorded(t.key)));
+  };
+  for (const v of views) if (v.docOnly && recorded(v.key)) Object.assign(v, { docOnly: false, prRecorded: true });
+  // PR 标题或 Task 行点了文档（owner 2026-11-01：正文不算，正文顺带提到文档名的太多）、没写到这份文档的任何任务，
+  // 记在还是「仅文档确认」的任务上，冲突改报 p，状态不变
+  const worded = new Set([...linked.links, ...linked.mentions].map((l) => `${l.pr}\n${docOf(l.taskKey)}`));
+  const docPrs = Map.groupBy(linked.docNames.filter((n) => n.declared && !worded.has(`${n.pr}\n${n.docId}`)), (n) => n.docId);
+  for (const v of views) if (v.docOnly && docPrs.has(docOf(v.key))) v.docPrs = docPrs.get(docOf(v.key)).map((n) => n.pr);
+
   // 任务 2.4：依赖展开 → 下一步分类 → 文档侧冲突（design §3.8.1、§3.9）。
   // 下一步要用 childSummary 判断叶子，所以放在子任务汇总之后。
   const expanded = expandDeps(docs);
   for (const v of views) Object.assign(v, expanded.get(v.key));
-  classifyNext(views);
+  classifyNext(views, new Set(tasks.filter((t) => WAIT_OWNER.test(t.title)).map((t) => t.key)));
   annotateSoon(views, prByNum);
   layoutGantt(docs, views, prByNum, defaults, new Date(now).getTime()); // 任务 6.1
-  const conflicts = [...detectConflicts(tasks, views), ...detectPrConflicts(tasks, views, prByNum), ...linked.conflicts,
+  const conflicts = [...detectConflicts(tasks, views), ...detectDocConflicts(docs, views, linked.docNames, prByNum), ...detectPrConflicts(tasks, views, prByNum), ...linked.conflicts,
     ...detectSessionConflicts(tasks, views, new Date(now).getTime()), ...sess.conflicts];
 
   const board = {
@@ -118,7 +136,7 @@ export function computeBoard(docs, prs, sessions, manual, sync, config, now, def
  * @param {object} task
  * @param {object[]} prs 该任务的关联 PR（PullRequest）；关闭未合并的不参与，全关闭时自然落到文档规则（需求 8.5）
  * @param {object} sync PR 号 → {state, reason}
- * @param {object[]} sessions 该任务的 SessionLink[]；有即满足「进行中」(a)（D7）
+ * @param {object[]} sessions 该任务的 SessionLink[]；有实际工作（workAt）才满足「进行中」(a)，只提到的不算
  * @param {number[]} partialMerged 标了「任务 N（部分）」且已合并的 PR 号：未勾选时满足「进行中」(c)
  */
 function deriveStatus(task, prs = [], sync = {}, sessions = [], partialMerged = []) {
@@ -144,10 +162,11 @@ function deriveStatus(task, prs = [], sync = {}, sessions = [], partialMerged = 
   }
   if (task.checkbox === 'done') return { status: 'done', rule: '8.2-3', docOnly: true, inProgressBy: [] };
   // 8.2-4：会话、[~]、部分或普通 PR 已合并均可证明进展，但不能证明完整交付。
-  const by = [...(sessions.length ? ['session'] : []), ...(task.checkbox === 'doing' ? ['marker'] : []),
+  const working = sessions.filter((s) => s.workAt);
+  const by = [...(working.length ? ['session'] : []), ...(task.checkbox === 'doing' ? ['marker'] : []),
     ...(partialMerged.length ? ['partial'] : []), ...(merged.some((p) => !partialMerged.includes(p.number)) ? ['merged'] : [])];
   if (by.length) return { status: 'in_progress', rule: '8.2-4', docOnly: false, inProgressBy: by,
-    statusSince: sessions.length ? sessions.map((s) => s.firstAt).sort()[0] : null };
+    statusSince: working.length ? working.map((s) => s.workAt).sort()[0] : null };
   return { status: 'not_started', rule: '8.2-5', docOnly: false, inProgressBy: [] };
 }
 
@@ -350,18 +369,21 @@ function cycles(graph) {
 // 「即将可开工」只等这两种状态：前置已经发了 PR（design §3.9、需求 12.4）；前置还在「进行中」算被阻塞。
 // UI 稿「即将可开工」= 前置已经在做或有 PR（UI 稿优先于 design / 需求 12.4 的「只认有 PR」）。
 const SOON = new Set(['in_progress', 'in_review', 'awaiting_merge']);
+// 任务标题写明要等 owner（CONVENTION 有写）：依赖满足了也轮不到 AI 开工
+const WAIT_OWNER = /[需等]\s*owner(?![a-z])|owner\s*确认/i;
 
 /**
  * 下一步分类（design §3.9、需求 12）：填每个 TaskView 的 deps.unmet、next、batch。
  * 要求 views 已有 status、childSummary、deps、parallelWith。
  * - unmet = 依赖里还不是「已合并完成」的任务（作废前置算已满足；待同步本地的前置状态是等待合并，也算未满足）。
  * - 只对「未开始」的叶子分类（有未作废子任务的父任务不笼统出现，需求 12.2）；其余任务 next 为 null。
- * - 先后：悬空 / 在环 → confirm；外部阻塞未解除 → blocked；依赖全满足 → ready；
+ * - 先后：悬空 / 在环 → confirm；外部阻塞未解除 → blocked；依赖全满足 → ready（标题写明等 owner 的归 owner，不分批）；
  *   未满足的依赖全处于进行中 / 等待 review / 等待合并 → soon（UI 稿口径）；其余 → blocked。
  * - 可开工任务按并行边并查集分批（需求 12.3），批号从 1 起按文档顺序首次出现编号；单独一个任务也自成一批。
  * @param {object[]} views TaskView[]，按文档 → 任务顺序
+ * @param {Set<string>} [waitOwner] 标题写明等 owner 的任务键
  */
-export function classifyNext(views) {
+export function classifyNext(views, waitOwner = new Set()) {
   const byKey = new Map(views.map((v) => [v.key, v]));
   const ready = [];
   for (const v of views) {
@@ -369,6 +391,7 @@ export function classifyNext(views) {
     if (v.status !== 'not_started' || v.childSummary?.total) continue;
     if (v.deps.dangling.length || v.deps.inCycle) v.next = 'confirm';
     else if (v.deps.external.some((e) => !e.resolved)) v.next = 'blocked';
+    else if (!v.deps.unmet.length && waitOwner.has(v.key)) v.next = 'owner';
     else if (!v.deps.unmet.length) { v.next = 'ready'; ready.push(v); }
     else v.next = v.deps.unmet.every((k) => SOON.has(byKey.get(k).status)) ? 'soon' : 'blocked';
   }
@@ -402,7 +425,8 @@ function detectConflicts(tasks, views) {
     const v = views[i];
     if (t.duplicate) add(v, 'e', msg`编号 ${t.number} 在文档里出现了不止一次`);
     if (t.void) return;
-    if (v.docOnly) add(v, 'c', msg('复选框已勾选，但没有关联 PR（仅文档确认）'));
+    if (v.docPrs) add(v, 'p', msg`复选框已勾选，文档有 PR ${brief(v.docPrs.map((n) => `#${n}`))}，但没写到这个任务`);
+    else if (v.docOnly) add(v, 'c', msg('复选框已勾选，但没有关联 PR（仅文档确认）'));
     if (v.deps.dangling.length) {
       const { file, line, text } = v.deps.dangling[0];
       add(v, 'f', msg`依赖了找不到的对象：${joinList([...new Set(v.deps.dangling.map((x) => x.raw))])}`, { file, line, text });
@@ -415,6 +439,22 @@ function detectConflicts(tasks, views) {
   return out;
 }
 
+/**
+ * q：文档一个任务都没完成，又有已合并 PR 点名这份文档，多半是做完了没回写。每份文档一条，归档、没有任务的不看。
+ * @param {{pr: number, docId: string}[]} names linkPrs(...).docNames
+ */
+function detectDocConflicts(docs, views, names, prByNum) {
+  const status = new Map(views.map((v) => [v.key, v.status]));
+  const out = [];
+  for (const d of docs) {
+    const live = (d.tasks ?? []).filter((t) => !t.void);
+    if (d.archived || !live.length || live.some((t) => status.get(t.key) === 'done')) continue;
+    const merged = names.filter((n) => n.docId === d.docId && prByNum.get(n.pr).state === 'MERGED').map((n) => `#${n.pr}`);
+    if (merged.length) out.push({ type: 'q', docId: d.docId, detail: msg`一个任务都没完成，但已合并的 PR ${brief(merged)} 点名了这份文档` });
+  }
+  return out;
+}
+
 // ---- 任务 3.4：PR 关联、PR 侧冲突、即将可开工在等什么、在等我处理 ----
 
 const SOURCE_TEXT = { title: msg('标题'), body: msg('描述'), branch: msg('分支名') };
@@ -422,9 +462,15 @@ const SOURCE_TEXT = { title: msg('标题'), body: msg('描述'), branch: msg('�
 /**
  * PR ↔ 任务（design §3.8.2）；最后叠加手动记录（applyManual，任务 4.1）。
  * 候选文档 = PR 所属分支线 docFilter 过滤后的文档；未归类或没配 docFilter 的用全部文档。
- * 来源只取一处：标题有引用 → 标题；否则描述；都没有才看分支名。标题生效时另解析描述 / 分支名，
+ * 来源只取一处：标题有引用 → 标题；否则描述的 Task 行（正文叙述不算）；都没有才看分支名。标题写了任务键或编号时
+ * 代号不展开（titleRefs）。标题生效时另解析 Task 行 / 分支名，
  * 与标题**完全不重叠**才记冲突 i（#360 标题 M0-c、描述「任务 3–10」只是写法粗细不同，不算指向不同）。
  * 歧义 / 不存在 → 冲突 h，这部分不关联；一条都没关联上的 PR 即「未关联」（需求 6.7）。多对多（需求 6.5）。
+ * 标题没有生效的引用时，描述正文（bodyProse）里的任务键和编号是弱关联（owner 2026-11-01）：进 mentions，只算「有 PR 记录」，
+ * 不进 links、tasks，所以不影响状态、a、l、i、会话和甘特图；代号不算，写法问题不报。
+ * docs 类 PR（isRecordTitle）只作记录：解析出的任务也进 mentions，不进 links、tasks；手动关联仍可让它算数。
+ * docNames = 没关闭的 PR 在标题、Task 行、正文（bodyProse）里点到的文档；declared = 标题或 Task 行点到的。p 只看 declared，q 都看。
+ * 描述来源的 h 只留在 refIssues：描述没有标题那么正式，PR 详情看得到就够了。
  * 已关闭未合并的 PR 不报 h / i / n（N21），问题只留在 refIssues 里给 PR 详情看。
  * 3.5 用它找出「已关联的已合并 PR」去跑 checkLocalSync。
  * @param {object[]} docs PlanDoc[]
@@ -432,6 +478,7 @@ const SOURCE_TEXT = { title: msg('标题'), body: msg('描述'), branch: msg('�
  * @param {object} config ProjectConfig（用 branchLines）
  * @param {object[]} [manual] ManualRecord[]
  * @returns {{ links: {pr: number, taskKey: string, source: 'manual'|'title'|'body'|'branch', evidence: string, at?: string}[],
+ *   mentions: {pr: number, taskKey: string, evidence: string}[], docNames: {pr: number, docId: string, declared: boolean}[],
  *   prs: Map<number, {branchLine: string|null, refIssues: string[], tasks: string[], unlinked: string[]}>,
  *   conflicts: {type: 'h'|'i'|'n'|'j', pr: number, taskKey?: string, detail: string}[],
  *   removed: {pr: number, taskKey: string, source: string, evidence: string}[] }}
@@ -441,6 +488,8 @@ const SOURCE_TEXT = { title: msg('标题'), body: msg('描述'), branch: msg('�
 export function linkPrs(docs, prs, config, manual = []) {
   const lines = config?.branchLines ?? [];
   const links = [];
+  const mentions = [];
+  const docNames = [];
   const info = new Map();
   const conflicts = [];
   for (const pr of prs) {
@@ -449,7 +498,7 @@ export function linkPrs(docs, prs, config, manual = []) {
     const cands = filter ? docs.filter((d) => new RegExp(filter).test(d.docId)) : docs;
     const alias = aliasMap(cands);
     const opts = refOptions(cands, alias);
-    const raw = { title: unalias(extractRefs(pr.title, opts), alias), body: unalias(extractRefs(pr.body, opts), alias),
+    const raw = { title: titleRefs(unalias(extractRefs(pr.title, opts), alias)), body: unalias(extractRefs(taskLines(pr.body), opts), alias),
       branch: unalias(extractBranchRefs(pr.headRefName, opts), alias) };
     const source = ['title', 'body', 'branch'].find((s) => hasRefs(raw[s]));
     const where = source && msg`PR ${SOURCE_TEXT[source]}`;
@@ -464,15 +513,25 @@ export function linkPrs(docs, prs, config, manual = []) {
     const inPart = (x) => r.partial.includes(x);
     const part = r?.partial.length
       ? resolveRefs({ ...r, keys: r.keys.filter(inPart), nums: r.nums.filter(inPart), codes: r.codes.filter(inPart) }, cands).tasks : [];
+    const record = isRecordTitle(pr.title);
     for (const taskKey of res.tasks) {
-      links.push({ pr: pr.number, taskKey, source, evidence, ...(part.includes(taskKey) ? { partial: true } : {}) });
+      if (!record) links.push({ pr: pr.number, taskKey, source, evidence, ...(part.includes(taskKey) ? { partial: true } : {}) });
+      else if (pr.state !== 'CLOSED') mentions.push({ pr: pr.number, taskKey, evidence });
+    }
+
+    const prose = unalias({ ...extractRefs(bodyProse(pr.body), opts), codes: [] }, alias);
+    const declared = new Set([...raw.title.docIds, ...raw.body.docIds]);
+    if (pr.state !== 'CLOSED') for (const docId of new Set([...declared, ...prose.docIds])) docNames.push({ pr: pr.number, docId, declared: declared.has(docId) });
+    if (pr.state !== 'CLOSED' && !(source === 'title' && res.tasks.length)) {
+      const said = prose.spans.filter((x) => x.kind === 'key' || x.kind === 'num').map((x) => x.text).join('、');
+      for (const taskKey of resolveRefs(prose, cands).tasks) if (!res.tasks.includes(taskKey)) mentions.push({ pr: pr.number, taskKey, evidence: said });
     }
 
     const refIssues = [...checked.issues];
     // 已关闭未合并的 PR 不进「需要确认」的 h / i / n：它不参与关联与状态（excludedPrs、deriveStatus 都跳过），
     // 写法问题也没法再改（如 #20 改分支名后被 GitHub 关闭，旧分支名永远留在 PR 上）。PR 详情仍列 refIssues。
     const report = pr.state !== 'CLOSED';
-    if (report) for (const detail of refIssues) conflicts.push({ type: 'h', pr: pr.number, detail });
+    if (report && source !== 'body') for (const detail of refIssues) conflicts.push({ type: 'h', pr: pr.number, detail });
     if (source === 'title' && res.tasks.length) {
       for (const s of ['body', 'branch']) {
         const other = hasRefs(raw[s]) ? resolveRefs(raw[s], cands).tasks : [];
@@ -485,10 +544,10 @@ export function linkPrs(docs, prs, config, manual = []) {
     // n 原本只经 conflicts 呈现；关闭后不报，就挪进 refIssues，PR 详情才看得到（放在 h 循环之后，不会被当成 h 报）
     if (report) for (const detail of issues) conflicts.push({ type: 'n', pr: pr.number, detail });
     else refIssues.push(...issues);
-    info.set(pr.number, { branchLine, refIssues, tasks: res.tasks, unlinked: [] });
+    info.set(pr.number, { branchLine, refIssues, tasks: record ? [] : res.tasks, unlinked: [], ...(record && { record }) });
   }
-  const removed = applyManual(docs, manual, links, info, conflicts);
-  return { links, prs: info, conflicts, removed };
+  const removed = applyManual(docs, manual, links, mentions, info, conflicts);
+  return { links, mentions, docNames, prs: info, conflicts, removed };
 }
 
 /**
@@ -500,7 +559,7 @@ export function linkPrs(docs, prs, config, manual = []) {
  * - PR 不在当前 PR 列表（GitHub 还没拉到、超出回溯下限）→ 暂不生效，拉到后自然生效。
  * 同一 (taskKey, pr) 以最后一条为准（store 保证只留一条；这里防手改文件出现重复）。
  */
-function applyManual(docs, manual, links, info, conflicts) {
+function applyManual(docs, manual, links, mentions, info, conflicts) {
   const removed = [];
   if (!manual.length) return removed;
   const keys = new Set(docs.flatMap((d) => (d.tasks ?? []).map((t) => t.key)));
@@ -517,6 +576,7 @@ function applyManual(docs, manual, links, info, conflicts) {
     if (!i) continue;
     const at = links.findIndex((l) => l.pr === r.pr && l.taskKey === r.taskKey);
     if (r.action === 'unlink') {
+      mentions.splice(0, Infinity, ...mentions.filter((m) => m.pr !== r.pr || m.taskKey !== r.taskKey)); // 手动解除的记录也不算记录
       if (at < 0) continue;
       removed.push(links.splice(at, 1)[0]);
       i.tasks = i.tasks.filter((k) => k !== r.taskKey);
@@ -562,7 +622,7 @@ function detectPrConflicts(tasks, views, prByNum) {
     if (t.void) { add(v, 'm', msg`任务已作废，仍关联着 PR ${nums(v.prs)}`); return; }
     const live = v.prs.filter((l) => prByNum.get(l.pr)?.state !== 'CLOSED');
     const wholeMerged = live.filter((l) => !l.partial && prByNum.get(l.pr)?.state === 'MERGED');
-    if (v.rule !== '8.2-1' && wholeMerged.length && t.checkbox !== 'done') add(v, 'a', msg`PR ${nums(wholeMerged)} 已合并，但复选框未勾`);
+    if (v.rule !== '8.2-1' && wholeMerged.length && t.checkbox !== 'done' && t.checkbox !== 'doing') add(v, 'a', msg`PR ${nums(wholeMerged)} 已合并，但复选框未勾`);
     if (v.rule === '8.2-1' && t.checkbox === 'done') add(v, 'b', msg`复选框已勾，但 PR ${nums(live)} 还没合并`);
     if (!live.length) add(v, 'd', msg`关联的 PR ${nums(v.prs)} 均已关闭未合并`);
     const mine = new Set(live.map((l) => l.pr));
@@ -608,22 +668,27 @@ function waitingList(prs, info, sync, config, nowMs, extra = []) {
 
 const MINUTE = 6e4;
 const DAY = 864e5;
-const hasTaskRefs = (r) => r.keys.length + r.nums.length + r.codes.length > 0;
+const hasTaskRefs = (r) => r.keys.length + r.nums.length > 0;
+const docOf = (key) => key.slice(0, key.lastIndexOf('#'));
 const SIGNAL_TEXT = { prompt: msg('人发消息'), dispatch: msg('子 agent 派活'), command: msg('AI 执行的命令') };
 
 /**
  * 会话 ↔ 任务（design §3.8.3）。对每个会话按信号时间顺序走一遍：
- * 1. 上下文 docId = 整个会话 touch 过的文档 ∪ prompt / dispatch 里写出的 docId（取全会话，先说「做任务 3」、
- *    后读 spec 的会话也能定位）。
+ * 1. 上下文 docId = 整个会话 touch 过的文档 ∪ prompt / dispatch 里写出的 docId ∪ prompt / dispatch / command 里的
+ *    里程碑代号所在的文档（取全会话，先说「做任务 3」、后读 spec 的会话也能定位）。代号只进上下文，不解析成任务。
  * 2. 候选文档 = 会话某个 cwd 落在分支线工作区时用该分支线 docFilter 过滤的文档，否则全部文档。
  * 3. 带任务引用的 prompt / dispatch 设「当前焦点」= resolveRefs 唯一命中的任务；歧义 / 不存在 → 冲突 h、不关联。
- *    整条消息一个都没对上时焦点清空（人已经转去做别的，别把后续活动记到旧任务上）；只写 docId、不带引用的消息不改焦点。
+ *    整条消息一个都没对上时焦点清空（人已经转去做别的，别把后续活动记到旧任务上）；只写 docId 或代号、不带引用的消息不改焦点。
  * 4. 每条信号的 until（到下一条信号前最后一条记录的时间，5.2 给出）计入当前焦点 → 焦点段的最后活动时间。
  * 5. edit → 被改的任务行；pr-link → 该 PR 的全部关联任务；branch = 某 PR head → 该 PR 的全部关联任务，
  *    且在切到下一个分支前一直计活动（会话整段都在这条分支上）。
- * 6. command（N32：AI 执行的提交、起 PR、建分支命令里的任务号）→ 像点名一样设这一路（主线或那一路子 agent）的焦点；
+ * 6. command（AI 执行的提交、起 PR、建分支命令里的任务号）→ 像点名一样设这一路（主线或那一路子 agent）的焦点；
  *    对不上任务时不清焦点、不报冲突（命令常在别的仓库里跑，报出来全是噪音）。
- * 每条关联记 evidenceAt = 最近一次直接点到它的信号时间（续活动不算），mod 选主任务先看它（N32）。
+ * 每条关联记 evidenceAt = 最近一次直接点到它的信号时间（续活动不算），mod 选主任务先看它。
+ * 7. 关联都留着，但只有实际工作才记 workAt、让任务进「进行中」：派活、非 docs 命令、PR 登记、PR 分支，
+ *    以及焦点段里改过代码（信号的 worked，读取层标）。点名、询问、改任务行、docs 提交（g.docs，也不换焦点）只算提到。
+ * 时间、类型、内容都相同的信号（fork 出来的会话带着父会话的记录）只算给最早的会话；后面的会话照样用它更新焦点，
+ * 只是不留关联和冲突。fork 之后改的代码单独算：工作证据只走焦点 / lane 的续活动，不重放共享信号自己点到的任务。ponytail: 最后一条相同信号之后的活动要等 fork 里下一条信号才算，要精确得存每条记录的时间。
  * ponytail: 5.2 的 branch 信号每个分支只记首次，A → B → A 切回 A 时不再计 A；真遇到再让 5.2 记每次切换。
  * ponytail: 焦点只有一个——同一时刻并行派出多个子 agent 时只有最后一个派的任务算「运行中」，其余是「最近活跃」
  *           （状态照样是进行中）；要精确得按子 agent 文件各自的时间算，改动在 5.2。
@@ -646,28 +711,54 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
   const linkedIds = new Set();
   // docRef 文档（N17）与主工作区那份同路径，但会话改 / 碰的是磁盘上的文件，不是 ref 上那份：不进会话上下文、不认 edit
   const byPath = (p) => docs.filter((d) => d.path === p && !d.ref);
+  const owner = new Map(); // 信号内容 → 最早带着它的会话
+  const workSeen = new Map(); // 信号内容 → 目前见到的最晚工作时间
+  const workOwn = new Set(); // 会话 + 信号内容：这份工作证据归它
+  for (const s of [...sessions].sort((a, b) => Date.parse(a.firstAt) - Date.parse(b.firstAt) || (a.id < b.id ? -1 : 1))) {
+    for (const g of s.signals) {
+      const id = signalId(g);
+      if (!owner.has(id)) owner.set(id, s);
+      // 工作证据单独归属：fork 接着改代码时，worked（最后一次工作的时间）标在它那份共享信号上，比更早的会话都晚才是新工作；
+      // 复制来的时间相同或更早，不算。ponytail: fork 自己的工作早于别的会话时不算，任务已有别的会话在做，状态不受影响
+      const t = Date.parse(g.worked) || 0;
+      if (g.worked && !(t <= workSeen.get(id))) { workSeen.set(id, t); workOwn.add(`${s.id}\n${id}`); }
+    }
+  }
   for (const s of sessions) {
     const cands = sessionCandidates(docs, s.cwds ?? [], lines);
     const ctx = new Set();
     for (const g of s.signals) {
       if (g.kind === 'touch') for (const d of byPath(g.docPath)) ctx.add(d.docId);
       if (g.kind === 'prompt' || g.kind === 'dispatch') for (const id of g.refs.docIds) ctx.add(id);
+      if (g.kind === 'prompt' || g.kind === 'dispatch' || g.kind === 'command') {
+        const codes = new Set(g.refs.codes.map((c) => c.toLowerCase()));
+        for (const d of cands) if ((d.groups ?? []).some((x) => x.code && codes.has(x.code.toLowerCase()))) ctx.add(d.docId);
+      }
     }
     const ctxIds = [...ctx];
     const per = new Map(); // 任务键 → SessionLink
     let direct = []; // 当前这条信号直接点到的任务
-    const hit = (key, g, lastAt, note) => {
+    const mine = (g) => owner.get(signalId(g)) === s;
+    // 共享信号的历史只归最早的会话（hit）；后续改代码的工作单独归属（下面的 workedOn），两边互不放行
+    const record = (key, g, lastAt, note, work) => {
       const l = per.get(key) ?? per.set(key, { sessionId: s.id, taskKey: key, firstAt: g.at, lastAt, evidence: [] }).get(key);
       if (Date.parse(g.at) < Date.parse(l.firstAt)) l.firstAt = g.at;
       if (Date.parse(lastAt) > Date.parse(l.lastAt)) l.lastAt = lastAt;
+      if (work && (!l.workAt || Date.parse(g.at) < Date.parse(l.workAt))) l.workAt = g.at;
       if (!note) return;
-      direct.push(key);
       l.evidence.push({ kind: g.kind, pos: { at: g.at, file: g.file, line: g.line }, note });
       if (!l.evidenceAt || Date.parse(g.at) > Date.parse(l.evidenceAt)) l.evidenceAt = g.at;
     };
+    const hit = (key, g, lastAt, note, work = false) => {
+      if (note) direct.push(key);
+      if (mine(g)) record(key, g, lastAt, note, work);
+    };
+    const workedOn = (keys, g) => {
+      if (workOwn.has(`${s.id}\n${signalId(g)}`)) for (const k of keys) record(k, g, g.until, null, true);
+    };
     const reported = new Set();
     const issue = (g, detail) => {
-      if (reported.has(detail)) return;
+      if (reported.has(detail) || !mine(g)) return;
       reported.add(detail);
       conflicts.push({ type: 'h', sessionId: s.id, source: { file: g.file, line: g.line, text: g.snippet }, detail });
     };
@@ -680,13 +771,13 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
     const lanes = new Set(s.signals.filter((g) => g.kind === 'agent').map((g) => g.lane));
     const laneTasks = new Map();
     const branchTasks = new Map(); // lane（主线为 null）→ 当前分支 = 某 PR head 时该 PR 的任务
-    // N32：没认出任务的命令（提交信息写的是对不上的编号）不打断上一条 PR 登记 / 改任务行的活动（回放实测：登记 PR 后
+    // 没认出任务的命令（提交信息写的是对不上的编号）不打断上一条 PR 登记 / 改任务行的活动（回放实测：登记 PR 后
     // 提交「任务 114 …」认不出，PR 的任务就停在提交那一刻，后面的活动全记到旧焦点上）
     const carry = new Map(); // lane → 上一条 pr-link / edit 点到的任务
     for (const g of s.signals) {
       direct = [];
       if ((g.kind === 'prompt' || g.kind === 'dispatch' || g.kind === 'command') && hasTaskRefs(g.refs)) {
-        const res = resolveRefs(g.refs, cands, ctxIds);
+        const res = resolveRefs({ ...g.refs, codes: [] }, cands, ctxIds);
         // 主线程收紧（实测误报）：会话没有任何文档上下文、消息里只有裸编号（没写 docId / 任务键 / 里程碑代号），
         // 而候选文档不止一份时，「在全部文档里恰好唯一」不足为凭——编排会话里的「5.3」恰好只在某份无关 spec
         // 里唯一，会被误关联。此时不关联（歧义照常报 h）；单文档项目不受影响。
@@ -697,7 +788,7 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
         // 子 agent 派活的说明通常会写明 spec 名；只有裸编号的派活多半属于别的项目 / 仓库外的 spec（实测：派 devboard
         // 自己的任务 3.1…6.3 被整会话上下文——含子 agent 执行过的命令——带到 task-panel-backend），一律不采信。
         if (bareOnly && g.kind === 'dispatch' && cands.length > 1) res.tasks = [];
-        // 命令常在别的仓库里跑（N32），派活说明常带别的项目的编号，对不上任务都不报冲突：只报人发的消息（N35，AI 写错由约定守卫当场拦）
+        // 命令常在别的仓库里跑，派活说明常带别的项目的编号，对不上任务都不报冲突：只报人发的消息（AI 写错由约定守卫当场拦）
         if (g.kind === 'prompt') {
           for (const a of res.ambiguous) issue(g, msg`${name}里的「${a.raw}」有歧义，可能是 ${brief(a.candidates)}`);
           for (const m of res.missing) {
@@ -708,27 +799,27 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
         const note = msg`${SIGNAL_TEXT[g.kind]}：「${g.snippet}」`;
         if (g.kind === 'command') {
           // 认出任务才换这一路的焦点；认不出不清（与人发消息不同：命令没写任务号不代表转去做别的了）
-          if (res.tasks.length && g.lane) laneTasks.set(g.lane, res.tasks);
-          else if (res.tasks.length) { focus = res.tasks; focusBy = g; }
-          for (const k of res.tasks) hit(k, g, g.until, note);
+          if (res.tasks.length && !g.docs && g.lane) laneTasks.set(g.lane, res.tasks);
+          else if (res.tasks.length && !g.docs) { focus = res.tasks; focusBy = g; }
+          for (const k of res.tasks) hit(k, g, g.until, note, !g.docs);
         } else if (g.kind === 'dispatch' && lanes.has(g.toolUseId)) {
           laneTasks.set(g.toolUseId, res.tasks.length ? res.tasks : focus);
-          for (const k of res.tasks) hit(k, g, g.at, note);
+          for (const k of res.tasks) hit(k, g, g.at, note, true);
         } else {
           focus = res.tasks;
           focusBy = g;
-          for (const k of focus) hit(k, g, g.until, note);
+          for (const k of focus) hit(k, g, g.until, note, g.kind === 'dispatch');
         }
       } else if (g.kind === 'edit') {
         for (const d of byPath(g.docPath)) {
           for (const t of d.tasks ?? []) if (!t.duplicate && g.taskNums.includes(t.number)) hit(t.key, g, g.until, msg`改了 ${d.docId} 的任务行 ${t.number}`);
         }
       } else if (g.kind === 'pr-link') {
-        for (const k of prInfo.get(g.pr)?.tasks ?? []) hit(k, g, g.until, msg`会话登记了 PR #${g.pr}`);
+        for (const k of prInfo.get(g.pr)?.tasks ?? []) hit(k, g, g.until, msg`会话登记了 PR #${g.pr}`, true);
       } else if (g.kind === 'branch') {
         const list = [];
         for (const p of prs.filter((x) => x.headRefName === g.branch)) {
-          for (const k of prInfo.get(p.number)?.tasks ?? []) { hit(k, g, g.until, msg`会话分支 ${g.branch} = PR #${p.number} 的 head`); list.push(k); }
+          for (const k of prInfo.get(p.number)?.tasks ?? []) { hit(k, g, g.until, msg`会话分支 ${g.branch} = PR #${p.number} 的 head`, true); list.push(k); }
         }
         branchTasks.set(g.lane ?? null, list);
         // N29（owner 2026-10-13）：主线切到能对上 PR 任务的分支 = 转去做这个 PR 了，此前由消息设定的焦点不再续活动
@@ -740,7 +831,9 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
       }
       if (g.kind === 'dispatch' && lanes.has(g.toolUseId) && !laneTasks.has(g.toolUseId)) laneTasks.set(g.toolUseId, focus);
       const own = g.lane ? laneTasks.get(g.lane) ?? focus : focus;
-      for (const k of [...own, ...(branchTasks.get(g.lane ?? null) ?? [])]) hit(k, g, g.until, null);
+      const active = [...own, ...(branchTasks.get(g.lane ?? null) ?? [])];
+      for (const k of active) hit(k, g, g.until, null);
+      workedOn(active, g);
       const lane = g.lane ?? null;
       if (g.kind === 'pr-link' || g.kind === 'edit') carry.set(lane, direct);
       else if (g.kind === 'command' && !direct.length) for (const k of carry.get(lane) ?? []) hit(k, g, g.until, null);
@@ -751,6 +844,9 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
   }
   return { links, conflicts, linkedIds };
 }
+
+// 信号的内容（不含它在哪个文件哪一行：fork 出来的记录换了文件）
+const signalId = ({ at, kind, snippet, refs, docPath, taskNums, pr, branch }) => JSON.stringify([at, kind, snippet, refs, docPath, taskNums, pr, branch]);
 
 // 会话在哪条分支线的工作区里干活，就只在那条分支线的文档里认引用（与 PR 的候选口径一致）。
 function sessionCandidates(docs, cwds, lines) {
@@ -781,7 +877,7 @@ function markActivity(views, nowMs, defaults) {
 /**
  * 会话侧的任务冲突（design §3.9）：
  * - o：进行中靠会话、最近一次活动已超停滞阈值（即 activity = stale）。
- * - l：依赖未满足却已有关联会话；同一会话里一起在做的前置、已勾选且只差本地 pull 的前置不算；PR 侧已报 l 的不重复报。
+ * - l：依赖未满足却已有会话在做（有 workAt，只提到的不算）；同一会话里一起在做的前置、已勾选且只差本地 pull 的前置不算；PR 侧已报 l 的不重复报。
  */
 function detectSessionConflicts(tasks, views, nowMs) {
   const checked = new Set(tasks.filter((t) => t.checkbox === 'done').map((t) => t.key));
@@ -795,9 +891,10 @@ function detectSessionConflicts(tasks, views, nowMs) {
       const last = v.sessions.map((l) => l.lastAt).sort().at(-1);
       add(v, 'o', msg`任务仍在进行中，关联 AI 会话已 ${Math.floor((nowMs - Date.parse(last)) / DAY)} 天没有动静`);
     }
-    if (v.conflicts.includes('l')) return;
-    const mine = new Set(v.sessions.map((l) => l.sessionId));
-    const early = v.deps.unmet.filter((k) => !(byKey.get(k).syncPending && checked.has(k)) && !byKey.get(k).sessions.some((l) => mine.has(l.sessionId)));
+    const working = v.sessions.filter((l) => l.workAt);
+    if (v.conflicts.includes('l') || !working.length) return;
+    const mine = new Set(working.map((l) => l.sessionId));
+    const early = v.deps.unmet.filter((k) => !(byKey.get(k).syncPending && checked.has(k)) && !byKey.get(k).sessions.some((l) => l.workAt && mine.has(l.sessionId)));
     if (early.length) add(v, 'l', msg`依赖 ${brief(early)} 还没完成，却已有 AI 会话在做`);
   });
   return out;
@@ -810,7 +907,7 @@ function detectSessionConflicts(tasks, views, nowMs) {
 function staleWaiting(views, config) {
   const lines = (config?.branchLines ?? []).filter((l) => l.docFilter);
   return views.filter((v) => v.activity === 'stale').map((v) => {
-    const docId = v.key.slice(0, v.key.lastIndexOf('#'));
+    const docId = docOf(v.key);
     return { kind: 'stale', pr: null, taskKey: v.key, tasks: [v.key],
       branchLine: lines.find((l) => new RegExp(l.docFilter).test(docId))?.id ?? null,
       sessions: v.sessions.map((l) => l.sessionId), since: v.sessions.map((l) => l.lastAt).sort().at(-1) };

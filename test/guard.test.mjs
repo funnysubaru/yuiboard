@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isTaskDoc, prTitles, commandTexts, commandDir, docIssues, titleIssues, refProblems, branchWords, withoutCode, REF_WHERE, applyEdit } from '../src/guard.mjs';
+import { isTaskDoc, prTitles, commandTexts, commandDir, docIssues, titleIssues, refProblems, branchWords, REF_WHERE, applyEdit } from '../src/guard.mjs';
+import { withoutCode } from '../src/refs.mjs';
 import { parseTasksDoc, parseAdrDoc } from '../src/parse.mjs';
 import { conventionBrief } from '../hooks/model.mjs';
 import { setLang } from '../web/i18n.mjs';
@@ -73,7 +74,7 @@ test('prTitles：只取 gh pr create / edit 的字面标题，读不出的不返
   assert.deepEqual(titlesOf(`echo gh pr create --title "a"; gh pr edit 3 --title "b"`), ['b'], 'echo 后面的不算');
   assert.deepEqual(titlesOf(`gh issue create --title "任务 1"`), []);
 });
-test('commandTexts：提交标题（含 heredoc）、PR 标题、新建分支名；读不出的不返回（N32）', () => {
+test('commandTexts：提交标题（含 heredoc）、PR 标题、新建分支名；读不出的不返回', () => {
   const texts = (c) => commandTexts(c).map((x) => `${x.branch ? 'b' : 't'}:${x.text}`);
   assert.deepEqual(texts(`git -C /w/x commit -qm "feat: N31 面板" -m "正文 N9"`), ['t:feat: N31 面板'], '-C 带值；第二个 -m 是正文');
   assert.deepEqual(texts(`git add -A && git commit -m "$(cat <<'EOF'\nfeat: N32 焦点\n\n正文 N9\nEOF\n)" && git push`), ['t:feat: N32 焦点'], 'heredoc 取正文第一行');
@@ -220,7 +221,7 @@ test('titleIssues：分支线——不知道 base 时任一条线下没问题就
   assert.match(titleIssues('fix: 任务 1', [PLAN, OTHER], lines, 'v2')[0], /不存在的任务：1/);
 });
 
-// ---- refProblems：提交标题、分支名、派活说明（N35） ----
+// ---- refProblems：提交标题、分支名、派活说明 ----
 const NEXT = parsed('NEXT', '### 里程碑 N1：一\n- [ ] 1 一\n- [ ] 1.1 子\n### 里程碑 N2：二\n- [ ] 2 二\n- [ ] 2 重复的二\n');
 const check = (t, docs = [NEXT]) => refProblems(t, docs, REF_WHERE.commit);
 
@@ -261,7 +262,7 @@ test('withoutCode：代码之外的无效引用照拦，配不上的反引号不
   }
 });
 
-test('commandTexts 的 dir：cd、git -C 累加；读不出的算判断不了（N35）', () => {
+test('commandTexts 的 dir：cd、git -C 累加；读不出的算判断不了', () => {
   const dirs = (c) => commandTexts(c).map((x) => x.dir);
   assert.deepEqual(dirs('git commit -m x'), ['']);
   assert.deepEqual(dirs('cd /a && git commit -m x; cd b && git switch -c y'), ['/a', '/a/b']);

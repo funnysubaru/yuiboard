@@ -6,12 +6,12 @@ import { readdir, stat, open, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { listWorktrees, parseTasksDoc } from '../docs.mjs';
-import { extractRefs, extractBranchRefs } from '../refs.mjs';
+import { extractRefs, extractBranchRefs, humanRefText, sessionRefs, withoutCode, isRecordTitle } from '../refs.mjs';
 import { commandTexts } from '../guard.mjs';
 import { mask } from '../mask.mjs';
 import { msg } from '../msg.mjs';
 
-const CACHE_VERSION = 5; // 5：N32 新增 command 信号
+const CACHE_VERSION = 9; // 5：新增 command 信号；6：引用块、代码块不再产生引用；7：派活逐字段去代码；8：worked、docs 标记；9：worked 记时间
 const TITLE_MAX = 60;
 const SNIPPET_MAX = 60; // 信号片段
 const SUMMARY_MAX = 120; // 最后一条消息摘要（design §3.7.4）
@@ -311,7 +311,7 @@ function extractSignals(state, obj, pos, isMain, { refOpts, anchors, repo }) {
     const masked = mask(flat);
     state.firstPrompt ??= clip(masked, TITLE_MAX);
     noteLastMsg(state, pos.at, masked);
-    const refs = extractRefs(flat, refOpts);
+    const refs = sessionRefs(humanRefText(text), flat, refOpts);
     if (hasRefs(refs)) addSignal(state, { kind: 'prompt', ...pos, refs, snippet: around(masked, refs, SNIPPET_MAX) });
     return;
   }
@@ -341,8 +341,10 @@ function humanText(obj) {
 
 function toolSignals(state, { id, name, input }, pos, refOpts, anchors) {
   if (name === 'Agent' || name === 'Task') {
-    const flat = [input.description, input.prompt].filter((x) => typeof x === 'string').join(' ').replace(/\s+/g, ' ').trim();
-    const refs = extractRefs(flat, refOpts);
+    const fields = [input.description, input.prompt].filter((x) => typeof x === 'string');
+    const flat = fields.join(' ').replace(/\s+/g, ' ').trim();
+    // 逐字段去代码：拼起来后 prompt 开头的围栏就不在行首了
+    const refs = sessionRefs(fields.map(withoutCode).join(' '), flat, refOpts);
     // toolUseId 对得上子 agent 的 meta.json：engine 据此把派活的任务交给那一路子 agent。
     // 没写任务的派活也要留（带 toolUseId 才留）：engine 在派活时刻冻结主线焦点给那一路，不能等它干活时再取当时的焦点
     const named = hasRefs(refs);
@@ -353,14 +355,17 @@ function toolSignals(state, { id, name, input }, pos, refOpts, anchors) {
   }
   const target = name === 'Bash' ? input.command : ['Edit', 'MultiEdit', 'Write'].includes(name) ? input.file_path : null;
   if (typeof target !== 'string') return;
-  // N32：AI（含子 agent）提交、起 PR、建分支时写下的任务号是它实际在做什么的直接证据；AI 回复里的文字照旧不算
+  // AI（含子 agent）提交、起 PR、建分支时写下的任务号是它实际在做什么的直接证据；AI 回复里的文字照旧不算
   if (name === 'Bash') {
-    for (const { text, branch } of commandTexts(target)) {
+    for (const { text, branch, pr } of commandTexts(target)) {
       const refs = branch ? extractBranchRefs(text, refOpts) : extractRefs(text, refOpts);
-      if (refs.keys.length || refs.nums.length || refs.codes.length) addSignal(state, { kind: 'command', ...pos, refs, snippet: clip(mask(text), SNIPPET_MAX) });
+      const docs = isRecordTitle(text);
+      if (refs.keys.length || refs.nums.length || refs.codes.length) addSignal(state, { kind: 'command', ...pos, refs, snippet: clip(mask(text), SNIPPET_MAX), ...(docs && { docs }) });
+      if (!branch && !pr && !docs) markWorked(state, pos.at, pos.lane);
     }
   }
   const t = target.replace(/\\/g, '/').normalize('NFC');
+  if (name !== 'Bash' && isCodePath(t, state.cwds)) markWorked(state, pos.at, pos.lane);
   for (const a of anchors) {
     if (!a.re.test(t)) continue;
     // touch 只用于会话上下文 docId：每份文档记第一次即可。
@@ -435,6 +440,22 @@ function extendUntil(state, at, lane = null) {
     return;
   }
 }
+
+// 改代码不单独成信号（新信号会切断 until 和焦点段），把最后一次的时间标在这一路当前的信号上：engine 据此认这一段的任务真的在做，
+// fork 复制来的时间相同，engine 据此分清复制和新工作。
+export function markWorked(state, at, lane = null) {
+  const t = Date.parse(at);
+  for (let i = state.signals.length - 1; i >= 0; i--) {
+    const s = state.signals[i];
+    if (Date.parse(s.at) > t || (s.lane ?? null) !== lane) continue;
+    if (!s.worked || t > Date.parse(s.worked)) s.worked = at;
+    return;
+  }
+}
+
+// 算「改代码」的文件：在会话工作目录里、不是 Markdown（规划文档、备忘、草稿都是 Markdown，临时脚本在工作目录外）。
+// ponytail: 只看 Edit / Write 和提交，改动全靠 sed 或脚本、又没提交的会话认不出；要更全得解析 Bash。
+export const isCodePath = (file, cwds) => !/\.(?:md|mdx|markdown)$/i.test(file) && (!file.startsWith('/') || cwds.some((c) => file.startsWith(`${c}/`)));
 
 // 截到 n 个字符（按码点，不切坏代理对）。
 function clip(s, n) {

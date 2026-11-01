@@ -5,12 +5,13 @@
 import { readdir, stat, open } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveScanScope as workspaceScope } from './claude-code.mjs';
-import { extractRefs } from '../refs.mjs';
+import { resolveScanScope as workspaceScope, isCodePath, markWorked } from './claude-code.mjs';
+import { commandTexts } from '../guard.mjs';
+import { extractRefs, humanRefText, isRecordTitle, sessionRefs, withoutCode } from '../refs.mjs';
 import { mask } from '../mask.mjs';
 import { msg } from '../msg.mjs';
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 5; // 2：引用块、代码块不再产生引用；3：派活逐字段去代码；4：worked 标记；5：worked 记时间
 // 单行上限：本机实测最大约 16.24 MB，4 / 8 MiB 会跳过真实记录（requirements「本机只读观察」）。
 const LINE_MAX = 20 * 1024 * 1024;
 const TITLE_MAX = 60;
@@ -288,34 +289,43 @@ function applyLine(state, raw, pos, ctx, events) {
   const human = pos.isRoot && type === 'event_msg' && line.includes('"type":"UserMessage"');
   const reply = pos.isRoot && type === 'response_item' && line.includes('"role":"assistant"');
   const dispatch = type === 'response_item' && DISPATCH_TOOLS.some((n) => line.includes(`"name":"${n}"`));
+  // 改文件、非 docs 提交只标在当前信号上（同 claude-code），不新增信号，会话关联不变
+  const work = type === 'event_msg' && (line.includes('"type":"FileChange"') || (line.includes('"type":"CommandExecution"') && line.includes('commit')));
   if (!at) return true;
   let signal = null;
   let adds = false; // 会不会新增 prompt / dispatch 信号（readGroup 据此判断要不要整组重放）
-  if (human || reply || dispatch) {
+  if (human || reply || dispatch || work) {
     obj ??= parse(line);
     if (!obj) return false;
     const p = obj.payload ?? {};
     const sp = { at, file: pos.file, line: pos.line };
     if (human && p.type === 'item_completed' && p.item?.type === 'UserMessage') {
-      const flat = flatten(humanText(p.item));
-      const refs = extractRefs(flat, ctx.refOpts);
+      const text = humanText(p.item);
+      const flat = flatten(text);
+      const refs = sessionRefs(humanRefText(text ?? ''), flat, ctx.refOpts);
       adds = hasRefs(refs);
       signal = () => noteHuman(state, flat, refs, sp);
     } else if (reply && p.type === 'message' && p.role === 'assistant' && Array.isArray(p.content)) {
       const { content } = p;
       signal = () => noteReply(state, content, sp, ctx.refOpts);
     } else if (dispatch && p.type === 'function_call' && DISPATCH_TOOLS.includes(p.name)) {
-      const flat = dispatchText(p.arguments);
-      const refs = extractRefs(flat, ctx.refOpts);
+      const fields = dispatchFields(p.arguments);
+      const flat = flatten(fields.join(' '));
+      const refs = sessionRefs(fields.map(withoutCode).join(' '), flat, ctx.refOpts);
       adds = hasRefs(refs);
       if (adds) signal = () => addSignal(state, { kind: 'dispatch', ...sp, refs, snippet: around(mask(flat), refs, SNIPPET_MAX) });
+    } else if (work && p.type === 'item_completed') {
+      const files = p.item?.type === 'FileChange' ? Object.keys(p.item.changes ?? {}).map((f) => f.normalize('NFC')) : [];
+      const cmd = p.item?.type === 'CommandExecution' && [p.item.command].flat().at(-1);
+      const commit = typeof cmd === 'string' && commandTexts(cmd).some((c) => !c.branch && !c.pr && !isRecordTitle(c.text));
+      signal = () => { if (commit || files.some((f) => isCodePath(f, state.cwds))) markWorked(state, at); };
     }
   }
   events.push({ t: Date.parse(at), at, signal, adds });
   return true;
 }
 
-// ---- 信号（design §3.7.4 的 prompt / dispatch；Codex 首版不出 edit / touch / pr-link / branch）----
+// ---- 信号（design §3.7.4 的 prompt / dispatch；Codex 首版不出 edit / touch / pr-link / branch，改代码标 worked）----
 
 // 父会话（含嵌套子 agent）明确派活的工具。send_message 只是给已有 agent 传话，同 Claude 的 SendMessage 不计。
 const DISPATCH_TOOLS = ['spawn_agent', 'followup_task'];
@@ -352,10 +362,10 @@ function noteReply(state, content, pos, refOpts) {
 }
 
 // 派活文本：只取能解析的 arguments.message 与 task_name；完整参数不进缓存。
-function dispatchText(args) {
+function dispatchFields(args) {
   const a = typeof args === 'string' ? parse(args) : args;
-  if (!a || typeof a !== 'object') return '';
-  return flatten([a.task_name, a.message].filter((x) => typeof x === 'string').join(' '));
+  if (!a || typeof a !== 'object') return [];
+  return [a.task_name, a.message].filter((x) => typeof x === 'string');
 }
 
 function noteLastMsg(state, at, masked) {

@@ -28,7 +28,7 @@ const groupNums = (d, code) => {
 
 // ---- design §3.5 验收推演（PR 标题为虚构，保留真实标题的识别难点） ----
 
-test('N35 写明的代号收窄后没命中时看全部候选；裸编号不放宽', () => {
+test('写明的代号收窄后没命中时看全部候选；裸编号不放宽', () => {
   const mvp = doc('mvp', '### 里程碑 M1：x\n- [ ] 1 a\n');
   const next = doc('NEXT', '### 里程碑 N11：y\n- [ ] 11 b\n- [ ] 12 c\n');
   const o = { knownDocIds: ['mvp', 'NEXT'], knownCodes: ['M1', 'N11'] };
@@ -186,17 +186,14 @@ test('spans 给出每处命中的原文与位置，供页面展示依据', () =>
 
 // ---- 分支名 ----
 
-test('分支名：collab-m0d → M0-d；collab-15.2-docs → 15.2；task-3；版本号与 collab-m0 不认', () => {
+test('分支名：collab-15.2-docs → 15.2；task-3；版本号与代号不认', () => {
   const o = optsOf(COLLAB_LINE);
-  const m0d = extractBranchRefs('feature/m0d-reconnect', o);
-  assert.deepEqual(m0d.codes, ['M0-d']);
-  assert.deepEqual(nums(resolveRefs(m0d, COLLAB_LINE).tasks), ['11', '11.1', '11.2', '12', '12.1', '12.2']);
   const docs = extractBranchRefs('feature/chat-15.2-docs', o);
   assert.deepEqual(docs.nums, ['15.2']);
   assert.deepEqual(resolveRefs(docs, COLLAB_LINE).tasks, [`${COLLAB}#15.2`]);
   assert.deepEqual(extractBranchRefs('devboard/task-1.2', o).nums, ['1.2']);
   assert.deepEqual(extractBranchRefs('fix/task_3', o).nums, ['3']);
-  for (const b of ['release-2.0.4', 'feature/m0-storage', 'v2/collab', 'feature/adr0042-sync-meta-pr3b-break-glass', 'chore/node-44']) {
+  for (const b of ['release-2.0.4', 'feature/m0d-reconnect', 'feature/m0-storage', 'v2/collab', 'feature/adr0042-sync-meta-pr3b-break-glass', 'chore/node-44']) {
     const r = extractBranchRefs(b, o);
     assert.deepEqual([r.nums, r.codes], [[], []], b);
   }
