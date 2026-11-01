@@ -2,7 +2,7 @@
 // 纯函数、不 import 任何 node: 模块（mod 只能 import 插件内的纯 ES 模块），路径一律按 POSIX 字符串处理。
 
 import { globMatcher, parseTasksDoc, parseAdrDoc } from './parse.mjs';
-import { extractRefs, aliasMap, unalias, hasRefs, refOptions, checkRefs, onlyDuplicates } from './refs.mjs';
+import { extractRefs, aliasMap, unalias, hasRefs, refOptions, checkRefs, onlyDuplicates, titleRefs } from './refs.mjs';
 import { msg } from './msg.mjs';
 
 // 规范化成绝对 POSIX 路径：合并重复斜杠、去掉 . 与 ..（越过根的 .. 丢弃）、NFC。不是绝对路径返回 null。
@@ -100,11 +100,11 @@ function prTitlesOf(words) {
 }
 
 /**
- * 一条 Bash 命令里 AI 写下的、能看出在做哪个任务的文字（N32）：`git commit` 的提交标题、`gh pr create` / `gh pr edit` 的标题、
+ * 一条 Bash 命令里 AI 写下的、能看出在做哪个任务的文字：`git commit` 的提交标题、`gh pr create` / `gh pr edit` 的标题、
  * 新建的分支名（`git worktree add -b`、`git checkout -b`、`git switch -c`，大写选项同）。提交标题取 `-m` 值的第一行，
  * `-m "$(cat <<'EOF' …)"` 取这个参数自己那段 heredoc 正文的第一行；`-m "$MSG"`、不含 heredoc 的命令替换读不出，一律不返回
  * （别的命令的 heredoc 不能拿来当提交标题，yuiboard PR #10 review）。不认 -F 文件。
- * dir（N35）是这个动作实际所在的目录：相对命令起点的路径（'' = 起点本身）或绝对路径，看 `cd`、`git -C`；判断不了为 null，
+ * dir是这个动作实际所在的目录：相对命令起点的路径（'' = 起点本身）或绝对路径，看 `cd`、`git -C`；判断不了为 null，
  * 调用方放行：Git 路径变量（前缀、export）、管道或后台里的 cd、后台任务之后、子 shell、条件、source 等都算判断不了。
  * 不是 shell 解释器，看不透的宁可 null。gh pr 的标题带 pr: true。
  * @param {string} command
@@ -369,7 +369,7 @@ export function titleIssues(title, docs, branchLines = [], base = null) {
   for (const cands of sets) {
     const alias = aliasMap(cands);
     const opts = refOptions(cands, alias);
-    const raw = unalias(extractRefs(title, opts), alias);
+    const raw = titleRefs(unalias(extractRefs(title, opts), alias));
     const issues = hasRefs(raw) ? checkRefs(raw, cands, alias, opts.knownDocIds, msg('PR 标题')).issues : [];
     if (best === null || issues.length < best.length) best = issues;
     if (!best.length) break;
@@ -377,38 +377,14 @@ export function titleIssues(title, docs, branchLines = [], base = null) {
   return best ?? [];
 }
 
-/** refProblems 的出处（N35） */
+/** refProblems 的出处 */
 export const REF_WHERE = { commit: msg('提交标题'), branch: msg('分支名'), dispatch: msg('派活说明') };
 
 // 分支名按 / - _ 切开才是一个个词（feat/n99-x 里的 n99）；代号里的连字符也被切开，M0-c 这种带后缀的代号在分支名里不查
 export const branchWords = (branch) => branch.replace(/[/_-]/g, ' ');
 
-// 派活说明里行内代码、代码块是引用的材料（日志、举例、别的仓库的编号），不是在点名任务。按 CommonMark 认：
-// ``` / ~~~ 围栏（收尾的同字符、不短于开头；没收尾到文末）、空行后四空格或 Tab 缩进的块（段落里的缩进行是续行，照查）、
-// 长度相等的反引号配对（不跨空行）。列表里的缩进续行也会被当成代码块，只会放行，不会误拦。
-export function withoutCode(text) {
-  const out = [];
-  let fence = null;
-  let prose = false; // 上一行是段落
-  for (const line of text.split('\n')) {
-    const open = fence ? null : line.match(/^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
-    if (fence || open) {
-      if (open) fence = new RegExp(`^ {0,3}${open[1][0]}{${open[1].length},}\\s*$`);
-      else if (fence.test(line)) fence = null;
-      out.push('');
-      prose = false;
-    } else if (!prose && line.trim() && /^(?: {4}| {0,3}\t)/.test(line)) {
-      out.push('');
-    } else {
-      out.push(line);
-      prose = Boolean(line.trim());
-    }
-  }
-  return out.join('\n').replace(/(?<![`\\])(`+)(?!`)(?:(?!\n\s*\n)[\s\S])*?(?<!`)\1(?!`)/g, ' ');
-}
-
 /**
- * 提交标题、新建分支名、派活说明里的任务引用是否真实存在（N35，owner 已定 8）。比 titleIssues 窄：
+ * 提交标题、新建分支名、派活说明里的任务引用是否真实存在（owner 已定 8）。比 titleIssues 窄：
  * deny 只收写明了文档名或代号却对不上的（NEXT#99、N99）；裸数字（任务 99）进 hint，只提示不拦。
  * 歧义、只对上重复编号、代号对应的任务全作废都是真实存在的写法，这里不管。别的仓库的 other-vendor#127 本来就不算引用。
  * ADR-0099#3 只在项目真有 ADR 时算：没有 ADR 的项目里它多半是别的项目的编号。

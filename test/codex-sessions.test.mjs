@@ -8,6 +8,8 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { scan, resolveScanScope, defaultRecordsDir, codex } from '../src/sessions/codex.mjs';
+import { linkSessions } from '../src/engine.mjs';
+import { parseTasksDoc } from '../src/parse.mjs';
 
 const tmpDir = async () => realpathSync(await mkdtemp(path.join(os.tmpdir(), 'devboard-codex-')));
 const git = (dir, ...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
@@ -182,6 +184,19 @@ async function scanRoot(lines, children = []) {
   const r = await scan(sigOpts(opts));
   return { ...r, s: r.sessions.find((x) => x.id === `codex:${uid(1)}`), file, kids, repo, records, opts };
 }
+
+test('Codex 派活各字段分别去代码：首行即围栏且有 task_name，块内任务号不算', async () => {
+  const fenced = '```\n任务 5\n```';
+  const { s } = await scanRoot(() => [call(T('01:00'), 1, 'spawn_agent', { task_name: '分析日志', message: fenced })]);
+  assert.deepEqual(s.signals.flatMap((g) => g.refs.nums), []);
+  const { s: named } = await scanRoot(() => [call(T('01:00'), 1, 'spawn_agent', { task_name: '做任务 4', message: fenced })]);
+  assert.deepEqual(named.signals.map((g) => g.refs.nums), [['4']]);
+});
+
+test('Codex 的人发消息：> 行和代码块里的任务号不算', async () => {
+  const { s } = await scanRoot(() => [userItem(T('01:00'), 1, '> 任务 3 还没做\n\n```\n任务 5\n```\n做任务 2')]);
+  assert.deepEqual(s.signals.map((g) => g.refs.nums), [['2']]);
+});
 
 test('人发：只认 UserMessage；response_item 里的 AGENTS / 环境块带任务号也不出信号', async () => {
   const { s, file } = await scanRoot(() => [
@@ -523,4 +538,64 @@ test('跨轮晚到但不产生信号的记录（助手回复、工具输出）�
   } finally {
     await chmod(path.join(records, root), 0o644);
   }
+});
+
+test('36.7 Codex：改文件、非 docs 提交标在当前信号上；规划文档、Markdown、工作目录外的文件不算', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const change = (ts, ord, file) => JSON.stringify({ timestamp: ts, ordinal: ord, type: 'event_msg',
+    payload: { type: 'item_completed', item: { type: 'FileChange', id: 'x', changes: { [file]: { type: 'update', unified_diff: '@@' } } } } });
+  const exec = (ts, ord, cmd) => JSON.stringify({ timestamp: ts, ordinal: ord, type: 'event_msg',
+    payload: { type: 'item_completed', item: { type: 'CommandExecution', id: 'x', command: ['/bin/zsh', '-lc', cmd] } } });
+  const T = (m) => `2026-09-20T01:${String(m).padStart(2, '0')}:00.000Z`;
+  await put(records, '2026/09/20', uid(1), jsonl(meta(uid(1), repo, T(0)),
+    userItem(T(1), 1, '做任务 1'), change(T(2), 2, path.join(repo, 'src/a.mjs')),
+    userItem(T(3), 3, '任务 2 怎么样'), change(T(4), 4, path.join(repo, 'README.md')), change(T(5), 5, '/elsewhere/a.mjs'),
+    userItem(T(6), 6, '做任务 3'), exec(T(7), 7, 'git commit -m "fix: 修解析"'),
+    userItem(T(8), 8, '任务 4 回写'), exec(T(9), 9, 'git commit -m "docs: 回写"')));
+  const r = await scan({ ...opts, docs: [] });
+  assert.deepEqual(r.sessions[0].signals.filter((x) => x.kind === 'prompt').map((x) => [x.refs.nums[0], Boolean(x.worked)]),
+    [['1', true], ['2', false], ['3', true], ['4', false]]);
+});
+
+test('36.7 fork 读取到引擎：父会话只点名、fork 只有后续改文件，任务算 fork 在做', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const T = (m) => `2026-09-20T01:0${m}:00.000Z`;
+  const change = JSON.stringify({ timestamp: T(5), ordinal: 2, type: 'event_msg',
+    payload: { type: 'item_completed', item: { type: 'FileChange', id: 'x', changes: { [path.join(repo, 'src/a.mjs')]: { type: 'update', unified_diff: '@@' } } } } });
+  await put(records, '2026/09/20', uid(1), jsonl(meta(uid(1), repo, T(0)), userItem(T(1), 1, '做任务 1')));
+  await put(records, '2026/09/20', uid(2), jsonl(meta(uid(2), repo, T(0)), userItem(T(1), 1, '做任务 1'), change));
+  const { sessions } = await scan({ ...opts, docs: [] });
+  const doc = { docId: 'demo', archived: false, ...parseTasksDoc('- [ ] 1 一\n', 'demo') };
+  const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
+  assert.deepEqual(links.map((l) => [l.sessionId, Boolean(l.workAt)]).sort(), [[`codex:${uid(1)}`, false], [`codex:${uid(2)}`, true]]);
+});
+
+test('36.7 fork 链读取到引擎：A 只点名、B 改文件、C 只复制不算，C 再改文件才算', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const T = (m) => `2026-09-20T01:0${m}:00.000Z`;
+  const change = (m, ord) => JSON.stringify({ timestamp: T(m), ordinal: ord, type: 'event_msg',
+    payload: { type: 'item_completed', item: { type: 'FileChange', id: 'x', changes: { [path.join(repo, 'src/a.mjs')]: { type: 'update', unified_diff: '@@' } } } } });
+  const said = (n) => [meta(uid(n), repo, T(0)), userItem(T(1), 1, '做任务 1')];
+  await put(records, '2026/09/20', uid(1), jsonl(...said(1)));
+  await put(records, '2026/09/20', uid(2), jsonl(...said(2), change(5, 2)));
+  await put(records, '2026/09/20', uid(3), jsonl(...said(3), change(5, 2)));
+  await put(records, '2026/09/20', uid(4), jsonl(...said(4), change(5, 2), change(9, 3)));
+  const { sessions } = await scan({ ...opts, docs: [] });
+  const doc = { docId: 'demo', archived: false, ...parseTasksDoc('- [ ] 1 一\n', 'demo') };
+  const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
+  assert.deepEqual(links.filter((l) => l.workAt).map((l) => l.sessionId).sort(), [`codex:${uid(2)}`, `codex:${uid(4)}`]);
+});
+
+test('36.7 fork + 派活读取到引擎：Codex 没有 lane，共享派活的任务 2 不算 fork 之后在任务 1 上的改动', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const T = (m) => `2026-09-20T01:0${m}:00.000Z`;
+  const change = JSON.stringify({ timestamp: T(5), ordinal: 4, type: 'event_msg',
+    payload: { type: 'item_completed', item: { type: 'FileChange', id: 'x', changes: { [path.join(repo, 'src/a.mjs')]: { type: 'update', unified_diff: '@@' } } } } });
+  const said = (n) => [meta(uid(n), repo, T(0)), call(T(1), 1, 'spawn_agent', { task_name: 'demo 任务 2', message: '（虚构）' }), userItem(T(2), 2, '回到 demo 任务 1')];
+  await put(records, '2026/09/20', uid(1), jsonl(...said(1)));
+  await put(records, '2026/09/20', uid(2), jsonl(...said(2), change));
+  const { sessions } = await scan({ ...opts, docs: [], knownDocIds: ['demo'] });
+  const doc = { docId: 'demo', archived: false, ...parseTasksDoc('- [ ] 1 一\n- [ ] 2 二\n', 'demo') };
+  const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
+  assert.deepEqual(links.filter((l) => l.workAt).map((l) => [l.sessionId, l.taskKey]).sort(), [[`codex:${uid(1)}`, 'demo#2'], [`codex:${uid(2)}`, 'demo#1']]);
 });

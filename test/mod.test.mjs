@@ -113,7 +113,7 @@ test('focusOf：同一时刻点到过的在前、没勾选的在前、没有子�
   assert.equal(focusOf(tree, 's').keys[0], 'alpha#1');
 });
 
-test('focusOf：先看最近一次直接证据（evidenceAt），续活动一样晚的旧点名任务排后（N32）', () => {
+test('focusOf：先看最近一次直接证据（evidenceAt），续活动一样晚的旧点名任务排后', () => {
   const at = '2025-09-27T00:00:00Z';
   const s = { docs: DOCS, tasks: [
     view('alpha#0.1', [{ ...link('s', 'running', at), named: true, evidenceAt: '2025-09-20T00:00:00Z' }]),
@@ -126,7 +126,7 @@ test('focusOf：先看最近一次直接证据（evidenceAt），续活动一样
   assert.deepEqual(focusOf(s, 's').keys, ['beta#1', 'alpha#0.1'], '证据时间相同再看 lastAt');
 });
 
-test('focusOf：已完成、作废的任务不算正在做；关联的任务都完成或作废时标 idle（N32）', () => {
+test('focusOf：已完成、作废的任务不算正在做；关联的任务都完成或作废时标 idle', () => {
   const at = '2025-09-27T00:00:00Z';
   const done = (k, ev) => ({ ...view(k, [{ ...link('s', 'running', at), evidenceAt: ev }]), status: 'done' });
   const s = { docs: DOCS, tasks: [done('beta#1', '2025-09-26T00:00:00Z'), view('alpha#0.1', [{ ...link('s', 'running', at), evidenceAt: '2025-09-20T00:00:00Z' }])] };
@@ -308,7 +308,7 @@ test('paneOf 聚焦卡片：recent 写「最近做的 · 文档 · 多久前」�
   assert.deepEqual(row(miniPane({ focus: { keys: ['alpha#1.2'], recent: true, at: '2025-09-26T22:30:00Z' } }), 'focus').texts, ['本会话最近做的 · alpha · 2 小时前']);
   assert.deepEqual(row(miniPane({ focus: { keys: ['alpha#1.2'], recent: true } }), 'focus').texts, ['本会话最近做的 · alpha']);
   assert.deepEqual(row(miniPane({ focus: { keys: ['alpha#1.2'], recent: true, idle: true, at: '2025-09-26T22:30:00Z' } }), 'focus').texts,
-    ['本会话当前没有进行中的任务 · 最近做的 · alpha · 2 小时前'], 'N32：任务都完成了');
+    ['本会话当前没有进行中的任务 · 最近做的 · alpha · 2 小时前'], '任务都完成了');
   const none = miniPane({ focus: { keys: ['nope#1'], recent: false } });
   assert.deepEqual(none.focus.map((r) => [r.key, r.kind, r.texts]), [['focus', 'empty', ['本会话还没关联到任务']]]);
   assert.deepEqual(miniPane({ focus: null }).focus.map((r) => r.kind), ['empty']);
@@ -350,7 +350,7 @@ test('paneOf 状态色调：进行中按会话活动分运行中 / 停滞，已�
   s.tasks.find((v) => v.key === 't#4').syncPending = []; // 空数组不算
   const p = pane(s, { projectId: 'mini', focus: { keys: ['t#2'], recent: false } }); // 聚焦在 t 里，文档默认展开
   assert.deepEqual(s.tasks.map((v) => row(p, `task:${v.key}`).tone), ['run', 'stale', 'review', 'merge', 'sync', 'done', 'todo', 'void']);
-  // N31：圆圈右边写状态文字，与色调一一对应
+  // 圆圈右边写状态文字，与色调一一对应
   assert.deepEqual(s.tasks.map((v) => row(p, `task:${v.key}`).texts[0]),
     ['◔ 进行中', '◔ 停滞中', '◑ 等待 review', '◕ 等待合并', '◕ 待同步', '● 完成', '○ 未开始', '⊘ 作废']);
   assert.equal(row(p, 'focus:t#2').tone, 'stale');
@@ -518,7 +518,7 @@ test('paneOf 三语：setLang(en) 后视图名、状态、服务端句子都是�
   }
 });
 
-// ---------- PR 视图与聚焦卡片的 PR（N33，owner 已定 21） ----------
+// ---------- PR 视图与聚焦卡片的 PR（owner 已定 21） ----------
 
 const H = 36e5;
 const at = (ms) => new Date(NOW_MS - ms).toISOString();
@@ -620,8 +620,8 @@ test('预算：每组 30 条、每条说明 4,000 字（所有类型都有）', 
   const item = p.body.find((r) => r.kind === 'checkItem');
   assert.ok(item.texts[2].endsWith(` · ${long(500)}…（省略 3500 字）`));
   assert.ok(p.body.length > 30, '整行放到预算用完');
-  // 15 组：c 收起只有组行，其余各 1 组行 + 30 条 + 「另有 1 条」
-  assert.equal(p.more.texts[0], `其余 ${1 + 14 * 32 - p.body.length} 项在浏览器里看`);
+  // 17 组：c、p 收起只有组行，其余各 1 组行 + 30 条 + 「另有 1 条」
+  assert.equal(p.more.texts[0], `其余 ${2 + 15 * 32 - p.body.length} 项在浏览器里看`);
 });
 
 test('预算：全部文档展开；聚焦任务排在预算之外也保留它与它的路径', () => {
@@ -704,7 +704,7 @@ test('fit：预算之内原样返回，不加末尾提示', () => {
   assert.deepEqual([keys(cut.body), cut.more.texts], [['a'], ['其余 2 项在浏览器里看']]);
 });
 
-// ---------------- 分支线切换（N34，owner 已定 22） ----------------
+// ---------------- 分支线切换（owner 已定 22） ----------------
 
 const linesOf = (p) => p.header.filter((r) => r.kind === 'line');
 const LINED = { ...PRS, workspaces: [{ id: 'repo', path: '/ws/repo' }, { id: 'side', path: '/ws/repo/side' }],

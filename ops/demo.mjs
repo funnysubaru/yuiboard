@@ -153,6 +153,8 @@ export function buildDemo(dir, now = Date.now()) {
   writeFileSync(path.join(projDir, 'demo-session.jsonl'), [
     human(at(40), 'Continue sync-engine task 2.3: snapshot export. Write the tests first.'),
     ai(at(38), 'Starting with a failing test for the snapshot writer.'),
+    JSON.stringify({ parentUuid: 'u', isSidechain: false, message: { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'Edit',
+      input: { file_path: path.join(repo, 'src/snapshot.js'), old_string: 'a', new_string: 'b' } }] }, type: 'assistant', uuid: 'a', timestamp: at(30), ...base }),
     ai(at(1), 'Snapshot export passes; adding the streaming variant next.'),
   ].join('\n') + '\n');
 

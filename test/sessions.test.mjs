@@ -279,7 +279,7 @@ test('① 人发消息点名文档与任务 → prompt 信号（位置、片段�
   assert.deepEqual(s.signals.map(strip), [{
     kind: 'prompt', at: T('01:00'), file, line: 1,
     refs: { keys: [], nums: ['2.5b'], codes: [], docIds: ['collab-m0-space-run'] },
-    snippet: '继续做 collab-m0-space-run 的任务 2.5b，先把测试补上', until: T('01:06'),
+    snippet: '继续做 collab-m0-space-run 的任务 2.5b，先把测试补上', until: T('01:06'), worked: T('01:05'),
   }]);
   assert.equal(s.title, '继续做 collab-m0-space-run 的任务 2.5b，先把测试补上', '无标题记录时用首条人发消息');
   assert.equal(s.lastSummary, '好的，先跑测试。', '最后消息摘要取人发消息与 AI 文字中较晚者');
@@ -290,6 +290,29 @@ test('② 只说「任务 3 先做」：prompt 信号只有编号、没有 docId
   const { s } = await scanOne((repo) => [human(repo, T('01:00'), '任务 3 先做')]);
   assert.equal(s.signals.length, 1);
   assert.deepEqual(strip(s.signals[0]).refs, { keys: [], nums: ['3'], codes: [], docIds: [] });
+});
+
+test('派活各字段分别去代码：首行即围栏且有 description，块内任务号不算', async () => {
+  const fenced = '```\n任务 5\n```';
+  const { s } = await scanOne((repo) => [ai(repo, T('01:00'), [tool('Agent', { description: '分析日志', prompt: fenced })])]);
+  assert.deepEqual(s.signals.flatMap((g) => g.refs.nums), []);
+  const { s: named } = await scanOne((repo) => [ai(repo, T('01:00'), [tool('Agent', { description: '做任务 4', prompt: fenced })])]);
+  assert.deepEqual(named.signals.map((g) => g.refs.nums), [['4']]);
+});
+
+test('reply 引用块、> 行与代码块里的任务号不产生信号，片段和摘要照旧', async () => {
+  const { s } = await scanOne((repo) => [human(repo, T('01:00'), '<!-- reply 1 -->\n> 任务 3 还没做\n\n```\n任务 5\n```\n好，做任务 4')]);
+  assert.deepEqual(s.signals.map((g) => g.refs.nums), [['4']]);
+  const { s: quoted } = await scanOne((repo) => [human(repo, T('01:00'), '> 任务 3 还没做')]);
+  assert.deepEqual(quoted.signals, []);
+  assert.equal(quoted.lastSummary, '> 任务 3 还没做');
+});
+
+test('派活说明里的代码不产生任务引用', async () => {
+  const { s } = await scanOne((repo) => [ai(repo, T('01:00'), [tool('Agent', { prompt: '看日志 `任务 3`\n```\n任务 5\n```\n做任务 4' })])]);
+  assert.deepEqual(s.signals.map((g) => g.refs.nums), [['4']]);
+  const { s: p } = await scanOne((repo) => [ai(repo, T('01:00'), [tool('Agent', { prompt: '读 `collab-m0-space-run` 的说明，做任务 2.5b' })])]);
+  assert.deepEqual(strip(p.signals[0]).refs, { keys: [], nums: ['2.5b'], codes: [], docIds: ['collab-m0-space-run'] }, 'docId 写在行内代码里也算上下文');
 });
 
 test('③ 只在 AI 回复里提到任务 13：不产生信号，只计 aiOnlyMentions', async () => {
@@ -423,24 +446,24 @@ test('N29 扫描到引擎：同一条用户记录先点名任务、又带上 PR 
   assert.deepEqual(last, { 2: T('01:20'), 3: T('01:20'), 4: T('01:40') });
 });
 
-test('N32 command：主线与子 agent 的提交、起 PR、建分支命令里的任务号 → command 信号（子 agent 的带 lane）；没写任务号的不出信号', async () => {
+test('command：主线与子 agent 的提交、起 PR、建分支命令里的任务号 → command 信号（子 agent 的带 lane）；没写任务号的不出信号', async () => {
   const bash = (command) => tool('Bash', { command });
   const { s, file } = await scanOne((repo) => [
     human(repo, T('01:00'), '（虚构）继续'),
-    ai(repo, T('01:01'), [bash('git worktree add -b feat/m0c-x ../wt'), bash(`git -C ../wt commit -m "$(cat <<'EOF'\nfeat: devboard-mvp#3 甲\nEOF\n)"`)]),
+    ai(repo, T('01:01'), [bash('git worktree add -b feat/task-3-x ../wt'), bash(`git -C ../wt commit -m "$(cat <<'EOF'\nfeat: devboard-mvp#3 甲\nEOF\n)"`)]),
     ai(repo, T('01:02'), [bash('git commit -m "（虚构）补测试"'), bash('gh pr create --title "fix: 任务 4" --body x')]),
   ], {
     'subagents/agent-a.jsonl': (repo) => [ai(repo, T('01:03'), [bash('git commit -m "fix: 任务 5"')], { isSidechain: true })],
   }, { 'subagents/agent-a.meta.json': '{"toolUseId":"toolu_a"}' });
   assert.deepEqual(s.signals.filter((x) => x.kind === 'command').map((x) => [x.at, x.file === file, x.lane ?? null, x.snippet, strip(x).refs]), [
-    [T('01:01'), true, null, 'feat/m0c-x', { keys: [], nums: [], codes: ['M0-c'], docIds: [] }],
+    [T('01:01'), true, null, 'feat/task-3-x', { keys: [], nums: ['3'], codes: [], docIds: [] }],
     [T('01:01'), true, null, 'feat: devboard-mvp#3 甲', { keys: ['devboard-mvp#3'], nums: [], codes: [], docIds: ['devboard-mvp'] }],
     [T('01:02'), true, null, 'fix: 任务 4', { keys: [], nums: ['4'], codes: [], docIds: [] }],
     [T('01:03'), false, 'toolu_a', 'fix: 任务 5', { keys: [], nums: ['5'], codes: [], docIds: [] }],
   ]);
 });
 
-test('N32 扫描到引擎：AI 提交写了任务号就接管主线焦点；早先点名的任务不再续活动，evidenceAt 记最近一次直接证据', async () => {
+test('扫描到引擎：AI 提交写了任务号就接管主线焦点；早先点名的任务不再续活动，evidenceAt 记最近一次直接证据', async () => {
   const doc = { docId: 'devboard-mvp', path: '.claude/specs/devboard-mvp/tasks.md', archived: false,
     ...parseTasksDoc('- [ ] 2 甲\n- [ ] 3 乙\n', 'devboard-mvp') };
   const { s } = await scanOne((repo) => [
@@ -459,7 +482,7 @@ test('N32 扫描到引擎：AI 提交写了任务号就接管主线焦点；早�
   assert.deepEqual(conflicts, [], '命令里对不上的任务号不报冲突');
 });
 
-test('N32 扫描到面板：一条命令里先提交、后起 PR，后续活动归最后那个动作的任务（PR #54 review）', async () => {
+test('扫描到面板：一条命令里先提交、后起 PR，后续活动归最后那个动作的任务（PR #54 review）', async () => {
   const doc = { docId: 'devboard-mvp', path: '.claude/specs/devboard-mvp/tasks.md', archived: false,
     ...parseTasksDoc('- [ ] 2 甲\n- [ ] 3 乙\n', 'devboard-mvp') };
   for (const [command, last] of [
@@ -481,7 +504,7 @@ test('N32 扫描到面板：一条命令里先提交、后起 PR，后续活动�
   }
 });
 
-test('N32 扫描到面板：读不出的提交信息不拿后面 cat 的 heredoc 当证据，焦点不变（yuiboard PR #10 review）', async () => {
+test('扫描到面板：读不出的提交信息不拿后面 cat 的 heredoc 当证据，焦点不变（yuiboard PR #10 review）', async () => {
   const doc = { docId: 'devboard-mvp', path: '.claude/specs/devboard-mvp/tasks.md', archived: false,
     ...parseTasksDoc('- [ ] 2 甲\n- [ ] 3 乙\n', 'devboard-mvp') };
   for (const msg of ['"$MSG"', '"$(git log -1 --format=%s)"']) {
@@ -590,4 +613,69 @@ test('文档 / 代号 / 仓库变了：缓存作废，旧消息按新口径重�
   assert.deepEqual(r1.sessions[0].signals, [], 'M0-d 还不是已知代号');
   const r2 = await scan({ ...sigOpts(opts), knownCodes: ['M0-c', 'M0-d'], prev: r1.cache });
   assert.deepEqual(r2.sessions[0].signals.map((x) => x.refs.codes), [['M0-d']]);
+});
+
+test('36.7 改代码标在当前信号上：规划文档、Markdown、工作目录外的文件不算；没写任务号的非 docs 提交也算', async () => {
+  const edit = (file_path) => tool('Edit', { file_path, old_string: 'a', new_string: 'b' });
+  const { s } = await scanOne((repo) => [
+    human(repo, T('01:00'), '做任务 3.2'),
+    ai(repo, T('01:01'), [edit(path.join(repo, 'src/a.mjs'))]),
+    human(repo, T('01:10'), '任务 3.3 怎么样'),
+    ai(repo, T('01:11'), [edit(path.join(repo, 'README.md')), tool('Write', { file_path: '/elsewhere/scratch.mjs', content: 'x' })]),
+    human(repo, T('01:20'), '做任务 4.1'),
+    ai(repo, T('01:21'), [tool('Bash', { command: 'git commit -m "fix: 修解析"' })]),
+    human(repo, T('01:30'), '任务 4.2 回写'),
+    ai(repo, T('01:31'), [tool('Bash', { command: 'git commit -m "docs: 回写"' })]),
+    human(repo, T('01:40'), '任务 5.1'),
+    ai(repo, T('01:41'), [tool('Bash', { command: 'git commit -m "docs: 任务 5.1 回写"' })]),
+    ai(repo, T('01:42'), [tool('Bash', { command: 'git commit -m "fix: 任务 5.2 修好"' })]),
+  ]);
+  assert.deepEqual(s.signals.filter((x) => x.kind === 'prompt').map((x) => [x.refs.nums[0], Boolean(x.worked)]),
+    [['3.2', true], ['3.3', false], ['4.1', true], ['4.2', false], ['5.1', false]]);
+  assert.deepEqual(s.signals.filter((x) => x.kind === 'command').map((x) => [x.refs.nums[0], Boolean(x.docs)]), [['5.1', true], ['5.2', false]]);
+});
+
+test('36.7 fork 读取到引擎：父会话只点名、fork 只有后续改代码，任务算 fork 在做', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const dir = path.join(records, enc(repo));
+  const said = human(repo, T('01:00'), '继续做 collab-m0-space-run 的任务 2.5b');
+  await put(path.join(dir, 'a-parent.jsonl'), jsonl(said));
+  await put(path.join(dir, 'b-fork.jsonl'), jsonl(said, ai(repo, T('01:05'), [tool('Edit', { file_path: path.join(repo, 'src/a.mjs'), old_string: 'a', new_string: 'b' })])));
+  const { sessions } = await scan(sigOpts(opts));
+  const doc = { docId: 'collab-m0-space-run', archived: false, ...parseTasksDoc('- [ ] 2.5b 一\n', 'collab-m0-space-run') };
+  const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
+  assert.deepEqual(links.map((l) => [l.sessionId, Boolean(l.workAt)]), [['a-parent', false], ['b-fork', true]]);
+});
+
+test('36.7 fork 链读取到引擎：A 只点名、B 改代码、C 只复制不算，C 再改代码才算', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const dir = path.join(records, enc(repo));
+  const said = human(repo, T('01:00'), '继续做 collab-m0-space-run 的任务 2.5b');
+  const edit = (at) => ai(repo, T(at), [tool('Edit', { file_path: path.join(repo, 'src/a.mjs'), old_string: 'a', new_string: 'b' })]);
+  await put(path.join(dir, 'a-root.jsonl'), jsonl(said));
+  await put(path.join(dir, 'b-fork.jsonl'), jsonl(said, edit('01:05')));
+  await put(path.join(dir, 'c-copy.jsonl'), jsonl(said, edit('01:05')));
+  await put(path.join(dir, 'd-more.jsonl'), jsonl(said, edit('01:05'), edit('01:09')));
+  const { sessions } = await scan(sigOpts(opts));
+  const doc = { docId: 'collab-m0-space-run', archived: false, ...parseTasksDoc('- [ ] 2.5b 一\n', 'collab-m0-space-run') };
+  const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
+  assert.deepEqual(links.filter((l) => l.workAt).map((l) => l.sessionId).sort(), ['b-fork', 'd-more']);
+});
+
+test('36.7 fork + lane 读取到引擎：派给子 agent 的任务 2 不算 fork 在主线的改动，只算主线焦点任务 1', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const dir = path.join(records, enc(repo));
+  const base = [human(repo, T('01:00'), '继续做 collab-m0-space-run 的任务 1'),
+    ai(repo, T('01:01'), [tool('Agent', { description: '任务 2 收尾', prompt: 'collab-m0-space-run' })])];
+  const sub = jsonl(ai(repo, T('01:02'), [text('（虚构）子 agent 在干活')], { isSidechain: true }));
+  for (const id of ['a-root', 'b-fork']) {
+    await put(path.join(dir, id, 'subagents', 'agent-x1.jsonl'), sub);
+    await put(path.join(dir, id, 'subagents', 'agent-x1.meta.json'), '{"toolUseId":"toolu_x"}');
+  }
+  await put(path.join(dir, 'a-root.jsonl'), jsonl(...base));
+  await put(path.join(dir, 'b-fork.jsonl'), jsonl(...base, ai(repo, T('01:05'), [tool('Edit', { file_path: path.join(repo, 'src/a.mjs'), old_string: 'a', new_string: 'b' })])));
+  const { sessions } = await scan(sigOpts(opts));
+  const doc = { docId: 'collab-m0-space-run', archived: false, ...parseTasksDoc('- [ ] 1 一\n- [ ] 2 二\n', 'collab-m0-space-run') };
+  const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
+  assert.deepEqual(links.filter((l) => l.workAt).map((l) => [l.sessionId, l.taskKey]).sort(), [['a-root', 'collab-m0-space-run#2'], ['b-fork', 'collab-m0-space-run#1']]);
 });

@@ -578,12 +578,13 @@ function taskRow(task, view, ctx) {
  * 仅文档确认、⚠ 不一致（冲突提示，悬停看明细）。冲突 c 就是「仅文档确认」本身，不再重复算「不一致」。
  */
 function rowTags(view, conflicts = [], prTags = null, aiTag = null) {
-  const other = conflicts.filter((c) => c.type !== 'c');
+  const other = conflicts.filter((c) => !DOC_ONLY.has(c.type));
   return [
     view.deps.external.filter((e) => !e.resolved).map((e) => h('span', { class: 'blk', title: t('外部前置未满足') }, `⛔ ${e.id}`)),
     aiTag,
     prTags,
-    view.docOnly && h('span', { class: 'flag info', title: t('文档里已勾选，但没有找到对应 PR') }, t('仅文档确认')),
+    view.docOnly && (view.docPrs ? h('span', { class: 'flag info', title: t('文档有 PR，但没写到这个任务') }, t('文档有 PR'))
+      : h('span', { class: 'flag info', title: t('文档里已勾选，但没有找到对应 PR') }, t('仅文档确认'))),
     other.length > 0 && h('span', { class: 'flag', title: other.map((c) => tx(c.detail)).join('\n') }, t('⚠ 不一致')),
   ];
 }
@@ -681,7 +682,7 @@ export function statusWhy(view, task) {
       return view.syncUnchecked
         ? t('文档已勾选、关联 PR 已合并；拿不到合并提交或本地没有对应 base 分支，本地同步未核对，按已合并完成算')
         : t('文档已勾选、关联 PR 已合并，且本地已包含合并提交');
-    case '8.2-3': return view.docOnly ? t('文档里已勾选，没找到 PR → 仅文档确认') : t('文档里已勾选 → 完成（本项目未接 GitHub，不看 PR）');
+    case '8.2-3': return view.docPrs ? t('文档里已勾选，文档有 PR 但没写到这个任务 → 仅文档确认') : view.docOnly ? t('文档里已勾选，没找到 PR → 仅文档确认') : view.prRecorded ? t('文档里已勾选，PR 只有记录 → 完成') : t('文档里已勾选 → 完成（本项目未接 GitHub，不看 PR）');
     case '8.2-4': {
       const part = view.inProgressBy.includes('partial') && [...new Set(view.prs.filter((l) => l.partial).map((l) => `#${l.pr}`))];
       const merged = view.inProgressBy.includes('merged');
@@ -691,7 +692,7 @@ export function statusWhy(view, task) {
         merged && t('相关 PR 已合并，但文档尚未勾选确认完整交付，仍算进行中'),
       ].filter(Boolean).join(t('；')) + (part || merged ? '' : t('，还没有 PR'));
     }
-    default: return t('没有关联的会话或 PR，文档也没勾选');
+    default: return view.sessions?.length ? t('AI 会话只提到过，没有实际工作；文档也没勾选') : t('没有关联的会话或 PR，文档也没勾选');
   }
 }
 
@@ -1075,6 +1076,11 @@ export function renderNext(board, state) {
     list.map((v) => card(v, why(v.deps.on.length
       ? t`依赖已满足：${shortList(v.deps.on.map((k) => refLabel(k, tasks.get(v.key).docId)))}` : t('没有前置依赖'))))));
 
+  // 标题写明等 owner 的任务：依赖满足了，但轮不到 AI 开工，不算进可开工数字
+  const owners = of('owner');
+  const ownerBox = owners.length > 0 && h('div', { class: 'batch owner-wait' }, h('div', { class: 'bl' }, t`等 owner · ${owners.length}`),
+    owners.map((v) => card(v, why(t('标题写明要 owner 处理')))));
+
   const soon = of('soon').map((v) => {
     const docId = tasks.get(v.key).docId;
     return card(v, why(t`在等：${v.deps.waitingFor.map((w) => waitText(docId, w)).join(t('；'))}`));
@@ -1098,7 +1104,7 @@ export function renderNext(board, state) {
     h('div', { class: 'hint' }, hint),
     cards.length ? cards : h('div', { class: 'muted' }, t('暂无')));
   return h('section', { id: 'v-next' }, h('div', { class: 'cols' },
-    col(t('▶ 可开工'), of('ready').length, t('前置任务均已确认完成。同一个框里的任务可以并行做。'), ready),
+    col(t('▶ 可开工'), of('ready').length, t('前置任务均已确认完成。同一个框里的任务可以并行做。'), ownerBox ? [...ready, ownerBox] : ready),
     col(t('⏳ 即将可开工'), soon.length, t('前置任务已经在做或有 PR 了，全部确认完成后才能开工。'), soon),
     col(t('⛔ 被阻塞'), blocked.length, t('外部条件或前置任务还没开始。'), blocked),
     col(t('🙋 等我处理'), mine.length, board.freshness.github?.state === 'off' ? t('只有你能推进的事。本项目未接 GitHub，这里不含 PR。') : t('只有你能推进的事。'), mine, true)));
@@ -1240,7 +1246,14 @@ function taskPrSection(board, state, view) {
     return h('div', { class: 'box' }, prTag(p, state, true), h('div', { class: 'prt' }, p.title),
       h('div', { class: 'src' }, linkSourceText(l, codes), linkAction(board, state, l))); // 任务 4.2：解除 / 撤销
   });
-  return [h('h3', {}, 'PR'), boxes.length ? boxes : h('div', { class: 'muted' }, t('还没有 PR。')),
+  // 描述正文提到过的 PR：只作记录，不进状态
+  const mentioned = (view.mentionedPrs ?? []).filter((m) => byNum.has(m.pr)).map((m) => {
+    const p = byNum.get(m.pr);
+    return h('div', { class: 'box' }, prTag(p, state, true), h('div', { class: 'prt' }, p.title),
+      h('div', { class: 'src' }, p.record ? t`docs 类 PR 写到「${m.evidence.split(/、/).join(t('、'))}」，只作记录，不算交付`
+        : t`PR 描述提到「${m.evidence.split(/、/).join(t('、'))}」，只作记录，不算交付`));
+  });
+  return [h('h3', {}, 'PR'), boxes.length || mentioned.length ? [boxes, mentioned] : h('div', { class: 'muted' }, t('还没有 PR。')),
     unlinkedBoxes(board, state, view, codes), addPrPicker(board, state, view)]; // 任务 4.2
 }
 
@@ -1397,9 +1410,17 @@ export function overallStats(board) {
   };
 }
 
+/** 同一份文档在两条线上各算一次的份数（docRef 线的 ADR）：只注明，不去重；筛到一条线时另一份不在，自然是 null。 */
+export function duplicateDocs(board) {
+  const live = board.docs.filter((d) => !d.archived);
+  const dup = live.filter((d) => d.alias && live.some((x) => x.docId === d.alias));
+  return dup.length ? { docs: dup.length, tasks: dup.flatMap((d) => d.tasks).filter((x) => !x.void).length } : null;
+}
+
 /** 总览六张数字卡，标题与说明同 UI 稿（需求 10.1）。「整体进度」点进甘特图（需求 10.1），「可开工」「已合并·待同步到本地」点进下一步。 */
 function statCards(board, state) {
   const all = overallStats(board);
+  const dup = duplicateDocs(board);
   const go = () => { location.hash = hashFor('next', state.project, null, state.line, state); };
   const card = (label, n, cls, sub, onclick) => h('div', { class: `card stat${onclick ? '' : ' nolink'}`, onclick },
     h('div', { class: 'l' }, label), h('div', { class: `n ${cls}` }, n), h('div', { class: 'sub' }, sub));
@@ -1409,6 +1430,7 @@ function statCards(board, state) {
       h('div', { class: 'l' }, t('整体进度')),
       h('div', { class: 'n' }, pct(all.ratio)),
       h('div', { class: 'sub' }, t`${all.counts.done} / ${all.total} 个任务已合并完成`),
+      dup && h('div', { class: 'sub' }, t`「全部」含重复：${dup.docs} 份文档在两条线各算一次，共 ${dup.tasks} 个任务`),
       stackBar(all)),
     card(t('可开工'), all.ready, 'done', t('依赖都满足了'), go),
     card(t`${icon('in_progress')} 进行中`, all.counts.in_progress, 'doing', t`${all.running} 运行中 · ${all.stale} 停滞`),
@@ -1513,6 +1535,7 @@ function taskSessionSection(board, state, view) {
     return h('div', { class: 'box sess' },
       h('div', { class: 'shd' }, aiTag(l.activity, s.source, l.lastAt, state.now), h('b', {}, s.title ?? t`会话 ${l.sessionId}`)),
       h('div', { class: 'src' }, t`${SESSION_SOURCE_TEXT[s.source] ?? s.source} · 开始 ${clock(l.firstAt)} · 最近活动 ${recentText(l.lastAt, state.now)}`),
+      !l.workAt && h('div', { class: 'src' }, t('只提到，没有实际工作，不算进行中')),
       s.lastSummary && h('div', { class: 'last' }, t`最后一条：「${s.lastSummary}」`),
       ev.length > 0 && h('div', { class: 'src' }, t('判定依据：'),
         ev.slice(0, EVIDENCE_SHOWN).map((e) => h('div', { class: 'sev', title: e.pos.at }, t`${tx(e.note)} · ${e.pos.file} 第 ${e.pos.line} 行`)),
@@ -1713,12 +1736,14 @@ function manualBanners(board, state) {
 
 // ---------------- 需要确认（任务 6.4） ----------------
 
-/** 冲突 a–o 的中文类型名（需求 9.1），顺序即页面分组顺序。 */
+/** 冲突 a–q 的中文类型名（需求 9.1），顺序即页面分组顺序。 */
 export const CONFLICT_TEXT = {
-  a: t('PR 已合并、文档未勾'), b: t('文档已勾、PR 未合并'), c: t('仅文档确认'), d: t('PR 全部关闭未合并'), e: t('编号重复'),
+  a: t('PR 已合并、文档未勾'), b: t('文档已勾、PR 未合并'), c: t('仅文档确认'), p: t('文档有 PR，未写到任务'), q: t('规划文档可能没回写'), d: t('PR 全部关闭未合并'), e: t('编号重复'),
   f: t('悬空依赖'), g: t('循环依赖'), h: t('引用有歧义 / 不存在'), i: t('关联来源不一致'), j: t('失效的手动关联'),
   k: t('父子状态不一致'), l: t('提前开工'), m: t('作废任务仍关联 PR'), n: t('分支线约定不一致'), o: t('进行中停滞'),
 };
+/** 任务行已经标了「仅文档确认」/「文档有 PR」的两类：不算「⚠ 不一致」，「需要确认」里默认收起。 */
+export const DOC_ONLY = new Set(['c', 'p']);
 
 /**
  * 本视图要列的冲突；导航计数 = 全部条数，含 c，与「全部类型（N）」一致（owner 2026-10-10，N20）。
@@ -1730,6 +1755,7 @@ export function checkItems(board, state) {
   const live = new Set(board.docs.filter((d) => !d.archived).flatMap((d) => d.tasks.map((t) => t.key)));
   const prLine = new Map(board.prs.map((p) => [p.number, p.branchLine]));
   return (board.conflicts ?? []).filter((c) => (c.taskKey && c.type !== 'j' ? live.has(c.taskKey)
+    : c.docId ? board.docs.some((d) => d.docId === c.docId)
     : c.pr != null ? !state.line || prLine.get(c.pr) === state.line
       : !state.line));
 }
@@ -1765,20 +1791,21 @@ function checkCard(board, state, redraw) {
 
 function checkGroup(board, state, type, items) {
   const key = `check:${type}`;
-  const byDefault = type !== 'c' || state.checkType === 'c';
+  const byDefault = !DOC_ONLY.has(type) || state.checkType === type;
   return h('details', {
     class: 'cgrp', 'data-type': type, open: byDefault !== state.toggled.has(key),
     ontoggle: (e) => { if (e.currentTarget.open === byDefault) state.toggled.delete(key); else state.toggled.add(key); },
   }, h('summary', {}, t`${CONFLICT_TEXT[type]}（${items.length}）`), items.map((c) => checkBox(board, state, c)));
 }
 
-// 一条冲突一个框；对象优先是任务，其次 PR，再次会话。会话没有详情页，框不可点，只写出记录文件与行号。
+// 一条冲突一个框；对象优先是任务，其次 PR，再次文档、会话。会话没有详情页，框不可点，只写出记录文件与行号。
 function checkBox(board, state, c) {
   const task = c.type !== 'j' && c.taskKey ? board.docs.flatMap((d) => d.tasks).find((t) => t.key === c.taskKey) : null;
   const pr = c.pr != null ? board.prs.find((p) => p.number === c.pr) : null;
   const target = task ? task.key : pr ? `#${pr.number}` : null;
   const session = c.sessionId && board.sessions.find((s) => s.id === c.sessionId);
   const [obj, tip] = task ? [`${task.docId} ${task.number}`, mdText(task.title)]
+    : c.docId ? [c.docId, c.docId]
     : c.pr != null ? [`#${c.pr}`, pr?.title] : [t`会话 ${session?.title ?? c.sessionId}`, c.sessionId];
   return h('div', {
     class: target ? 'box go' : 'box', 'data-type': c.type, title: tip,
@@ -2178,7 +2205,7 @@ export function filterBoard(board, state) {
   if (!base.docs.some((d) => d.groups.some((g) => (g.code ?? g.title) === state.ms))) state.ms = null;
 
   const views = new Map(board.tasks.map((v) => [v.key, v]));
-  const conflicted = new Set((board.conflicts ?? []).filter((c) => c.taskKey && c.type !== 'c').map((c) => c.taskKey)); // c 同任务行，不算「不一致」
+  const conflicted = new Set((board.conflicts ?? []).filter((c) => c.taskKey && !DOC_ONLY.has(c.type)).map((c) => c.taskKey)); // c、p 同任务行，不算「不一致」
   const taskLevel = taskFiltered(state);
   const keep = (doc) => (t) => (!state.hideVoid || !t.void) && (!state.ms || msOf(doc, t.groupId) === state.ms)
     && (!state.status || views.get(t.key)?.status === state.status) && (!state.conflict || conflicted.has(t.key));

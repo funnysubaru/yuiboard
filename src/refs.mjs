@@ -21,6 +21,10 @@ const PARTIAL = '\\s*(?:[（(]\\s*(?:部分(?:完成)?|一部|[Pp]art(?:ial)?)\\
 const PREFIXED = new RegExp(
   `(?<![A-Za-z])(?:任务|タスク|[Tt]asks?)\\s*[:：#]?\\s*(${ITEM}(?:\\s*${SEP}\\s*${ITEM})*)(?![A-Za-z0-9]|\\.\\d)(${PARTIAL})?`, 'g');
 const ITEM_RE = new RegExp(`(${NUM})(?:\\s*${DASH}\\s*(${NUM}))?`, 'g');
+// 编号后面是工具输出或数量词时不是任务（`Tasks: 72 successful`、`任务 3 个`）；「个人版」「项目」是普通叙述，照认。
+const COUNTED = /^\s*(?:(?:successful|passed|failed)(?![A-Za-z])|个(?!人)|项(?!目))/i;
+const VERSION3 = /^\d+\.\d+\.\d+/;
+const LIST_TAIL = new RegExp(`\\s*${SEP}\\s*$`);
 // PR 标题末尾的版本括号「(collab 2.0.4)」「(1.15.743–744)」：识别前先遮掉，作第二道保险。
 const VERSION_PAREN = /\(\s*[a-z]*\s*\d+\.\d+\.\d+(?:\s*[–-]\s*\d+)?\s*\)/gi;
 // conventional-commit 头：「[V2] docs+fix(collab):」→ scope collab；多 scope 用 , / 分隔。
@@ -84,12 +88,17 @@ export function extractRefs(text, { knownDocIds = [], knownCodes = [] } = {}) {
   }
 
   scan(PREFIXED, (m) => {
-    for (const it of m[1].matchAll(ITEM_RE)) {
+    if (COUNTED.test(s.slice(m.index + m[0].length))) return;
+    const items = [...m[1].matchAll(ITEM_RE)];
+    // 三段版本号截止列表（`任务 58，2.0.83`）；列表本身就是三段任务号（4.1.1、4.1.2）时照旧
+    const stop = VERSION3.test(items[0][1]) ? -1 : items.findIndex((it) => VERSION3.test(it[1]));
+    for (const it of stop < 0 ? items : items.slice(0, stop)) {
       const n = it[2] ? `${stripT(it[1])}–${stripT(it[2])}` : stripT(it[1]);
       push(out.nums, n);
       if (m[2]) push(out.partial, n);
     }
-    out.spans.push({ kind: 'num', text: m[0].trim(), index: m.index });
+    const text = stop < 0 ? m[0] : m[0].slice(0, m[0].indexOf(m[1]) + items[stop].index).replace(LIST_TAIL, '');
+    out.spans.push({ kind: 'num', text: text.trim(), index: m.index });
   });
 
   // 代号整词、忽略大小写：前后不是 [A-Za-z0-9-]（M0-c 不会命中 M0-cd，也不会命中 xM0-c）。
@@ -123,29 +132,24 @@ const codeShape = (c) => { const m = /^([A-Za-z]+)\d+(-[A-Za-z0-9]+)?$/.exec(c);
 
 /**
  * 从 head 分支名识别引用（design §3.5 第 6 条；只在标题与描述都无引用时由调用方启用）。
- * 按 / - _ 切词：`task-<编号>`；词去掉非字母数字后等于某代号（collab-m0d → M0-d）；
- * 带点的编号词（collab-15.2-docs → 15.2）。三段纯数字的词视为版本号（release-2.0.4）不认。
+ * 按 / - _ 切词：`task-<编号>`；带点的编号词（collab-15.2-docs → 15.2）。三段纯数字的词视为版本号（release-2.0.4）不认。
+ * 里程碑代号不认（owner 2026-11-01）：分支名短，`m1a` 多半只是在说属于哪个里程碑，展开成整组会把几十个任务标成交付。
  * @param {string} branch
- * @param {{ knownCodes?: string[] }} [opts]
  * @returns {RawRefs}
  */
-export function extractBranchRefs(branch, { knownCodes = [] } = {}) {
+export function extractBranchRefs(branch) {
   const out = { keys: [], nums: [], codes: [], docIds: [], scopes: [], partial: [], unknown: [], spans: [] };
-  const norm = (c) => lower(c).replace(/[^a-z0-9]/g, '');
-  const codeOf = new Map(knownCodes.map((c) => [norm(c), c]));
   const b = (branch ?? '').normalize('NFC');
   const words = b.split(/[/_-]/);
-  const push = (kind, v, text) => {
-    const list = kind === 'code' ? out.codes : out.nums;
-    if (!list.includes(v)) list.push(v);
-    out.spans.push({ kind, text, index: b.indexOf(text) });
+  const push = (v, text) => {
+    if (!out.nums.includes(v)) out.nums.push(v);
+    out.spans.push({ kind: 'num', text, index: b.indexOf(text) });
   };
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     const next = words[i + 1];
-    if (lower(w) === 'task' && next && new RegExp(`^${NUM}$`).test(next)) { push('num', stripT(next), next); i++; }
-    else if (codeOf.has(norm(w))) push('code', codeOf.get(norm(w)), w);
-    else if (/^\d+[a-z]?(?:\.\d+[a-z]?)+$/.test(w) && !/^\d+\.\d+\.\d+/.test(w)) push('num', w, w);
+    if (lower(w) === 'task' && next && new RegExp(`^${NUM}$`).test(next)) { push(stripT(next), next); i++; }
+    else if (/^\d+[a-z]?(?:\.\d+[a-z]?)+$/.test(w) && !VERSION3.test(w) && !/^(?:release|rel|version|ver)$/i.test(words[i - 1] ?? '')) push(w, w);
   }
   return out;
 }
@@ -185,7 +189,7 @@ export function resolveRefs(raw, candidates, ctxDocIds = []) {
   }
 
   const hitsIn = (docs, match) => docs.map((doc) => ({ doc, keys: match(doc) })).filter((h) => h.keys.length);
-  // wide：收窄后没命中时再看全部候选（N35：代号是写明的，「devboard-mvp … N11」里 N11 在 NEXT，不算不存在）。
+  // wide：收窄后没命中时再看全部候选（代号是写明的，「devboard-mvp … N11」里 N11 在 NEXT，不算不存在）。
   // 裸编号不放宽，放宽会把别的 spec 的同号任务误关联
   const resolveOne = (ref, match, wide = false) => {
     let hits = hitsIn(pool, match);
@@ -248,6 +252,81 @@ export function unalias(raw, alias) {
   // 有歧义的简称写成的任务键保持原样，resolveRefs 记 missing 后由 linkPrs 改记歧义
   const key = (k) => { const i = k.lastIndexOf('#'); const d = i < 0 ? null : back(k.slice(0, i)); return d === null || Array.isArray(d) ? k : `${d}${k.slice(i)}`; };
   return { ...raw, docIds: raw.docIds.flatMap(back), keys: raw.keys.map(key), partial: raw.partial.map(key) };
+}
+
+// ---- 只取算数的那部分文本----
+
+// 代码块是引用的材料（日志、举例、别的仓库的编号），不是在点名任务。按 CommonMark 认：
+// ``` / ~~~ 围栏（收尾的同字符、不短于开头；没收尾到文末）、空行后四空格或 Tab 缩进的块（段落里的缩进行是续行，照查）。
+// 列表里的缩进续行也会被当成代码块，只会少认，不会误认。
+function withoutCodeBlocks(text) {
+  const out = [];
+  let fence = null;
+  let prose = false; // 上一行是段落
+  for (const line of text.split('\n')) {
+    const open = fence ? null : line.match(/^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
+    if (fence || open) {
+      if (open) fence = new RegExp(`^ {0,3}${open[1][0]}{${open[1].length},}\\s*$`);
+      else if (fence.test(line)) fence = null;
+      out.push('');
+      prose = false;
+    } else if (!prose && line.trim() && /^(?: {4}| {0,3}\t)/.test(line)) {
+      out.push('');
+    } else {
+      out.push(line);
+      prose = Boolean(line.trim());
+    }
+  }
+  return out.join('\n');
+}
+
+// 派活说明：代码块之外，行内代码也是材料（长度相等的反引号配对，不跨空行）
+export const withoutCode = (text) => withoutCodeBlocks(text).replace(/(?<![`\\])(`+)(?!`)(?:(?!\n\s*\n)[\s\S])*?(?<!`)\1(?!`)/g, ' ');
+
+// 人发的消息：reply 引用块（`<!-- reply 1 -->` 下面的 > 行）和其它 > 行是别人的话，代码块是贴的材料；
+// 行内代码留着，人写 `plan#4` 就是在点名
+export const humanRefText = (text) => withoutCodeBlocks(text).split('\n').filter((l) => !/^\s*>/.test(l)).join('\n');
+
+/** 会话文本的引用：任务号只看去掉材料后的 clean，docId 全文都算（路径常写在行内代码里，它只提供上下文，不点名任务） */
+export function sessionRefs(clean, full, opts) {
+  const refs = extractRefs(clean.replace(/\s+/g, ' '), opts);
+  return { ...refs, docIds: [...new Set([...refs.docIds, ...extractRefs(full, opts).docIds])] };
+}
+
+// docs 类 PR 只作记录：`docs:`、`docs(...)`、`chore(version)`，可带 `[V2]` 这类前缀；`docs+fix(...)` 混了改动，不算
+const RECORD = /^\s*(?:\[[^\]]*\]\s*)?(?:docs(?:\([^)]*\))?|chore\(version\))!?\s*[:：]/i;
+export const isRecordTitle = (title) => RECORD.test(title ?? '');
+
+// PR 描述只认行首的 Task 行（`Task:`、`Tasks:`、`任务：`、`タスク：`），叙述里提到的任务不算交付
+const TASK_LINE = /^\s*(?:tasks?|任务|タスク)\s*[:：]/i;
+export const taskLines = (body) => withoutCodeBlocks(body ?? '').split('\n').filter((l) => TASK_LINE.test(l)).join('\n');
+
+// 明说没交付的句子或小节（「本 PR 不含」「还没做」）
+const NOT_DELIVERED = /不含|不包含|不做|没做|还没|尚未|未完成|未做|未实现|暂不|后续|下一步|遗留|out of scope|not included|does not include|not done|follow[- ]?ups?|\btodo\b|含まない|含めない|未対応|未完了|今後/i;
+// 标题层级：# 1–6，整行加粗算最低一级 7，不是标题为 0
+const headingLevel = (l) => /^\s*(#{1,6})\s/.exec(l)?.[1].length ?? (/^\s*\*\*[^*]+\*\*[:：]?\s*$/.test(l) ? 7 : 0);
+
+/**
+ * PR 描述的正文（owner 2026-11-01）：去掉代码块、Task 行和明说没交付的内容。这里的任务号是弱关联，只记成「有 PR 记录」。
+ * ponytail: 按关键词排除，一句里既说做了又说没做时整行不算，只会少记。
+ */
+export function bodyProse(body) {
+  let skip = 0; // 正在跳过的小节的层级：子标题还在小节里，同级或更高才结束
+  return withoutCodeBlocks(body ?? '').split('\n').filter((l) => {
+    const no = NOT_DELIVERED.test(l);
+    const level = headingLevel(l);
+    if (level && level <= skip) skip = 0;
+    if (no && (level || /[:：]\s*$/.test(l))) skip ||= level || 7;
+    return !skip && !no && !TASK_LINE.test(l);
+  }).join('\n');
+}
+
+/** PR 标题写了任务键或编号时代号不展开（只留带部分标记的）：代号这时只是在说属于哪个里程碑（起因是整组变成等待 review） */
+export function titleRefs(raw) {
+  if (!raw.keys.length && !raw.nums.length) return raw;
+  const codes = raw.codes.filter((c) => raw.partial.includes(c));
+  const kept = (x) => x.kind !== 'code' || codes.some((c) => lower(x.text).startsWith(lower(c)));
+  return { ...raw, codes, spans: raw.spans.filter(kept) };
 }
 
 // unknown（像引用却对不上，N9）也算「有引用」：标题写了 ADR-0099#3 就以标题为准、报出来，不退到描述去误读。

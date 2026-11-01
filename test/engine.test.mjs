@@ -313,9 +313,9 @@ test('N1：PR 关联只证明进展，未勾选不能完成或放行下游（标
   const d = inline('### 里程碑 M0-a\n\n- [ ] 1 验收\n\n### 发布\n\n- [ ] 2 发布（依赖 1）\n');
   for (const [title, body, manual] of [
     ['任务 1', '', []],
-    ['修补', '任务 1 未完成', []],
-    ['修补', '不替代任务1全量审计', []],
-    ['修补', '背景 M0-a', []],
+    ['修补', 'Task: 任务 1 未完成', []],
+    ['修补', 'Task: 不替代任务1全量审计', []],
+    ['修补', 'Task: 背景 M0-a', []],
     ['任务 1（部分）', '', []],
     ['任务 1（部分）', '', [{ taskKey: 't#1', pr: 10, action: 'link', at: NOW }]],
   ]) {
@@ -391,7 +391,7 @@ test('#369：标题无引用 → 看描述；描述也无引用 → 未关联（
 
 test('分支名只在标题与描述都无引用时启用；#344 M0-b 与 T1 测试、版本号互不干扰', () => {
   const doc = collab();
-  const byBranch = linkPrs([doc], [{ ...fixturePr(372), title: '[V2] docs(collab): 文档回写', body: '' }], WIDGET);
+  const byBranch = linkPrs([doc], [{ ...fixturePr(372), title: '[V2] feat(collab): 收尾', body: '' }], WIDGET);
   assert.deepEqual(byBranch.links.map((l) => [l.taskKey, l.source]), [['collab-m0-space-run#15.2', 'branch']]);
   const r = linkPrs([doc], [fixturePr(344)], WIDGET);
   assert.deepEqual([...new Set(r.links.map((l) => l.taskKey.split('#')[1].split('.')[0]))], ['2']);
@@ -482,9 +482,9 @@ test('PR 级冲突 h、i、n 各一正一反；只命中重复编号不说「不
   const ambiguous = linkPrs([a, b], [pr(1, { title: '任务 3' })]);
   assert.deepEqual([ambiguous.links, ambiguous.prs.get(1).tasks, ambiguous.prs.get(1).refIssues.length], [[], [], 1], '歧义 → 未关联');
   // i：标题与描述 / 分支名完全不重叠；反例：有重叠
-  assert.deepEqual(types([pr(1, { title: '任务 5', body: 'a#3', headRefName: 'task-5' })]),
+  assert.deepEqual(types([pr(1, { title: '任务 5', body: 'Task: a#3', headRefName: 'task-5' })]),
     [[1, 'i', '标题指向 a#5，描述却指向 a#3']]);
-  assert.deepEqual(types([pr(1, { title: '任务 5', body: 'a#5 与 a#3' })]), []);
+  assert.deepEqual(types([pr(1, { title: '任务 5', body: 'Task: a#5 与 a#3' })]), []);
   // n：base 属协作版但缺前缀与标签；反例：守约定
   const cfg = { branchLines: WIDGET.branchLines.map((l) => ({ ...l, docFilter: undefined })) };
   const v2 = { baseRefName: 'v2/collab', title: '任务 5' };
@@ -541,7 +541,8 @@ test('在等我处理：全部 open PR（draft / ready 已等时长）+ 待同�
 // SessionRecord 直接手搭（扫描与信号提取在 sessions.test.mjs 测过）；refs 与 5.2 一样经 extractRefs 得出。
 const at = (min) => new Date(Date.parse(NOW) - min * 6e4).toISOString(); // 距 now 多少分钟前
 let lineNo = 0;
-const say = (docs, text, from, until = from, kind = 'prompt') => ({ kind, at: from, until, file: 'r/s.jsonl', line: ++lineNo,
+// worked：这些会话都真在干活；只提到的情况在 rule-precision.test.mjs
+const say = (docs, text, from, until = from, kind = 'prompt') => ({ kind, at: from, until, file: 'r/s.jsonl', line: ++lineNo, worked: true,
   refs: extractRefs(text, { knownDocIds: docs.map((d) => d.docId), knownCodes: docs.flatMap((d) => d.groups.map((g) => g.code).filter(Boolean)) }),
   snippet: text });
 const sig = (kind, from, until, extra) => ({ kind, at: from, until, file: 'r/s.jsonl', line: ++lineNo, ...extra });
@@ -640,7 +641,7 @@ test('④ 长会话多焦点：lastAt 按焦点段，只有当前焦点「运行
   assert.deepEqual([back['1'].sessions[0].firstAt, back['1'].sessions[0].lastAt, back['1'].activity], [at(120), at(0), 'running']);
 });
 
-test('⑤ 子 agent 派活即进行中；edit 直接关联被改的任务行', () => {
+test('⑤ 子 agent 派活即进行中；edit 直接关联被改的任务行，只算提到', () => {
   const docs = [withPath(inline(SIMPLE))];
   const s = session('s5', [
     say(docs, '实现任务 2', at(20), at(10), 'dispatch'),
@@ -650,7 +651,7 @@ test('⑤ 子 agent 派活即进行中；edit 直接关联被改的任务行', (
   assert.deepEqual([t['2'].status, t['2'].inProgressBy, t['2'].activity], ['in_progress', ['session'], 'running']);
   assert.deepEqual(t['2'].sessions[0].evidence.map((e) => [e.kind, e.note]), [['dispatch', '子 agent 派活：「实现任务 2」']]);
   assert.equal(t['2'].sessions[0].lastAt, at(9), 'edit 时焦点仍是 2，活动计入');
-  assert.deepEqual([t['4'].status, t['4'].sessions[0].evidence.map((e) => e.note)], ['in_progress', ['改了 t 的任务行 4']]);
+  assert.deepEqual([t['4'].status, t['4'].sessions[0].evidence.map((e) => e.note)], ['not_started', ['改了 t 的任务行 4']]);
 });
 
 test('子 agent 各算各的：派给认得出的子 agent 的任务不改主线焦点，由它自己的记录续活动；没点到任务的子 agent 续主线焦点', () => {
@@ -691,7 +692,7 @@ test('子 agent 各算各的：没写任务的派活冻结派活那一刻的主�
   assert.equal(t['1'].sessions[0].firstAt, at(60), '空焦点时派出的 te 不给任何任务续活动');
 });
 
-test('N32 command：主线的命令接管主线焦点；子 agent 的命令只换它那一路；对不上任务的命令不清焦点、不报冲突', () => {
+test('command：主线的命令接管主线焦点；子 agent 的命令只换它那一路；对不上任务的命令不清焦点、不报冲突', () => {
   const docs = [withPath(inline(SIMPLE))];
   const b = sBoard(docs, [session('s6', [
     say(docs, '做任务 1', at(60), at(55)),
@@ -709,7 +710,7 @@ test('N32 command：主线的命令接管主线焦点；子 agent 的命令只�
   assert.deepEqual(b.conflicts.filter((c) => c.type === 'h'), []);
 });
 
-test('N32 command：没认出任务的命令不打断上一条 PR 登记的活动', () => {
+test('command：没认出任务的命令不打断上一条 PR 登记的活动', () => {
   const docs = [withPath(inline(SIMPLE))];
   const prs = [{ number: 7, title: '任务 4', body: '', headRefName: 'feat-4', baseRefName: 'main', state: 'OPEN', isDraft: true, url: 'u', updatedAt: at(100) }];
   const t = byNum(sBoard(docs, [session('s7', [
@@ -977,7 +978,7 @@ test('最近变化 · 会话与任务事件：会话按同一段活动合并任�
 
 test('「任务 N（部分）」：保留部分依据、不报 a；另有普通 PR 合并仍需文档勾选确认', () => {
   const d = inline(SIMPLE);
-  const part = byNum(prBoard([d], [merged(10, { title: 'fix: 修一部分', body: '任务 1（部分）、任务 4' })], { 10: { state: 'synced' } }));
+  const part = byNum(prBoard([d], [merged(10, { title: 'fix: 修一部分', body: 'Task: 任务 1（部分）、任务 4' })], { 10: { state: 'synced' } }));
   assert.deepEqual([part['1'].status, part['1'].rule, part['1'].inProgressBy], ['in_progress', '8.2-4', ['partial']]);
   assert.deepEqual(part['1'].prs.map((l) => [l.pr, l.partial, l.evidence]), [[10, true, '任务 1（部分）、任务 4']]);
   assert.ok(!part['1'].conflicts.includes('a'), '部分 PR 合并了但复选框没勾是预期的，不报 a');
@@ -1003,14 +1004,14 @@ test('N9 部分标记：任务键、里程碑代号（整组）、不带括号�
     pr(10, { title: 'fix: plan-a#1（部分）' }),
     pr(11, { title: 'feat: M2（部分）' }),
     pr(12, { title: 'feat: M1、任务 1（部分）' }),
-    pr(13, { title: 'fix: 修文案', body: '任务 3 部分' }),
+    pr(13, { title: 'fix: 修文案', body: 'Task: 任务 3 部分' }),
     pr(14, { title: 'fix: 任务 2，部分' }),
     pr(15, { title: 'feat: Task 4 (part)' }),
   ], { id: 'demo' });
   const of = (n) => r.links.filter((l) => l.pr === n).map((l) => [l.taskKey.split('#')[1], !!l.partial]);
   assert.deepEqual(of(10), [['1', true]]);
   assert.deepEqual(of(11), [['3', true], ['4', true]], '代号带标记 = 整组都是部分交付');
-  assert.deepEqual(of(12), [['1', true], ['2', false]], '同一任务既有完整又有部分引用时按部分（保守）');
+  assert.deepEqual(of(12), [['1', true]], '写了任务号时不带标记的代号不展开');
   assert.deepEqual(of(13), [['3', true]], '描述兜底同样认');
   assert.deepEqual(of(14), [['2', true]]);
   assert.deepEqual(of(15), [['4', true]]);
@@ -1038,7 +1039,7 @@ test('N9 ADR 简称：ADR-0007#64 按分支线认到唯一那篇且标题优先�
 test('N9 像引用却对不上：报进「不满足约定」并给建议写法，不退到描述误读；PR#12、owner/repo#3 不算', () => {
   const d = { ...inline(N9_PLAN, 'plan-a'), path: 'plan-a/tasks.md' };
   const prs = [pr(30, { title: 'fix: Plan-A#1 修复', body: '任务 2' }), pr(31, { title: 'feat: M9 收尾' }),
-    pr(32, { title: '合并 PR#12 与 owner/repo-x#3 的修复', body: '任务 2' })];
+    pr(32, { title: '合并 PR#12 与 owner/repo-x#3 的修复', body: 'Task: 任务 2' })];
   const b = computeBoard([d], prs, [], [], {}, { id: 'demo' }, NOW);
   assert.deepEqual(b.prs.filter((p) => p.tasks?.length).map((p) => [p.number, p.tasks]), [[32, ['plan-a#2']]]);
   const conv = b.diagnostics.convention;
@@ -1075,7 +1076,7 @@ test('N17 docRef 分支线：PR 写不带前缀的文档原名，认回本线带
     { id: 'next', name: '新引擎线', base: 'next/x', docRef: 'next/x', docFiles: ['adr/ADR-0042-x.md'], docFilter: '^next:' }] };
   const r = linkPrs(docs, [
     pr(1, { title: 'feat(94): 某功能（ADR-0042-x#94）', baseRefName: 'next/x' }),
-    pr(2, { title: 'docs: ADR-0042 任务 94 记录', baseRefName: 'next/x' }),
+    pr(2, { title: 'feat: ADR-0042 任务 94 记录', baseRefName: 'next/x' }),
     pr(3, { title: 'fix: ADR-0042-x#1', baseRefName: 'main' }),
   ], cfg);
   const tasksOf = (n) => r.links.filter((l) => l.pr === n).map((l) => l.taskKey);
@@ -1152,7 +1153,7 @@ test('日文前置列表：「、」一侧没有关系词时只是列举，条�
   assert.deepEqual(d.relations.map((r) => r.kind).sort(), ['dep', 'parallel']);
 });
 
-test('N35 会话引用问题只对人发的消息报：派活说明、命令对不上不报，人发的照报', () => {
+test('会话引用问题只对人发的消息报：派活说明、命令对不上不报，人发的照报', () => {
   const docs = [withPath(inline(SIMPLE))];
   const b = sBoard(docs, [session('s7', [
     { ...say(docs, '实现任务 99', at(50), at(40), 'dispatch'), toolUseId: 'tg' },

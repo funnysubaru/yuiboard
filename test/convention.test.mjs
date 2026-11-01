@@ -121,8 +121,7 @@ test('PR 标题与描述：示例每行都认出任务号 / 代号 / 任务键�
       if (/部分|一部|\(partial\)/.test(t)) assert.ok(r.partial.length > 0, `${file} 部分标记：${t}`);
     }
     for (const b of lines('branch')) {
-      const r = extractBranchRefs(b, { knownCodes: opts.knownCodes });
-      assert.ok(r.nums.length + r.codes.length > 0, `${file} ${b}`);
+      assert.ok(extractBranchRefs(b).nums.length > 0, `${file} ${b}`);
     }
     assert.ok(MD.includes(`\`${bare}\``), `${file} 要有裸数字示例`);
     assert.deepEqual(extractRefs(bare, opts).nums, [], file);

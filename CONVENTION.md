@@ -109,6 +109,7 @@ Relations are read in only two places: **inside the parentheses of a task title*
 - List separators: `,`, `and`, `&`, `/`, `+`. Ranges use an en dash or hyphen (`2.1–2.4`, `2.1-2.4`) or a tilde (`1~3`, `1～3`) and only expand to existing tasks with the same parent at the same level.
 - `2.x` or the parent number = all its subtasks; `<spec name>#<number>` refers to a task in another document.
 - Write external prerequisites as `needs P1` and register them in the prerequisites table at the top of the document. To clear one, strike out its ID (`~~P1~~`) or mark the item `resolved`.
+- A task only the owner can move forward: put `需 owner`, `等 owner` or `owner 确认` in the title (these exact words, whatever the document's language). Once its dependencies are met it shows under "Waiting for owner" in Next up instead of counting as ready to start. Its status does not change.
 
 ```markdown
 # Example: Prerequisites table
@@ -254,7 +255,7 @@ Void tasks are left out of the counts, and a task that depends on one treats tha
 
 ## 6. In-progress marker (optional)
 
-When work starts, change `- [ ]` to `- [~]`; after merging, change it to `- [x]` (the same in Chinese and Japanese documents). This is optional: when a task has a linked AI session or PR, YUIBoard marks it in progress on its own.
+When work starts, change `- [ ]` to `- [~]`; after merging, change it to `- [x]` (the same in Chinese and Japanese documents). This is optional: when a task has a linked AI session or PR, YUIBoard marks it in progress on its own. A task marked `[~]` is not reported as "merged but unchecked" even after its linked PR merges.
 
 ```markdown
 # Example: In progress
@@ -277,17 +278,21 @@ feat: タスク 5 と 6 を実装
 
 **中文 / 日本語**: `任务 N`, `タスク N`; for partial work, `（部分）` / `（部分完成）` / `（一部）` or a trailing `部分` (`fix: 任务 13（部分）`, `fix: 任务 52 部分`, `fix: タスク 13（一部）`).
 
-**Bare numbers are not recognized**: the 3 in `fix: 3 bugs` is not taken as task 3.
+**Bare numbers are not recognized**: the 3 in `fix: 3 bugs` is not taken as task 3. Numbers followed by `successful`, `passed`, `failed`, `个` or `项` do not count either (`Tasks: 72 successful`), and a task list ends at a three-part version number (`Task 58, 2.0.83` counts 58 only).
 
 **ADR short names**: an ADR's document name is its whole file name (e.g. `ADR-0033-engine-upgrade`), but `ADR-0033#64` or `ADR-0033` in a title is also recognized, as long as the documents of the PR's branch line contain exactly one ADR numbered 0033. When there are several (duplicate numbers, or a same-named document from another branch line is also a candidate), it is reported as ambiguous; write the full document name.
 
 **Things that look like references but match nothing are reported**: if a task key in the title has the document name in the wrong case (`Devboard-MVP#3`) or an ADR number that does not exist (`ADR-0099#3`), or a code shaped like the document's milestone codes that does not exist (the document has `M0-c`, the title says `M0-z`), YUIBoard does not fall back to the description; it reports the problem under "Needs attention" and in the "Convention issues" section of the Diagnostics page, with a suggested rewrite. Any other `<name>#<number>` is usually an issue or PR in another repository (`other-vendor#127`, `PR#12`, `owner/repo#12`) and is not counted.
 
-**Without a task number in the title, every task number in the description counts as delivered**: YUIBoard falls back to the PR description only when the title has no task reference, and then every task number and milestone code in the description is treated as delivered by the PR — including background notes like "not done: task 13 still needs verification" or "groundwork for M0-c", and even syntax examples. So put delivered tasks in the title; once the title has a reference the description is ignored, and you can describe remaining work however you like. For PRs that really don't map to a task (syncing main, tweaking CI, editing rule documents), avoid task numbers in the description; if you do include them, unlink them by hand on the board.
+**When the title has a task number, milestone codes do not expand**: if the title has a task key or `Task <number>`, a milestone code next to it is only background and does not expand to the whole group (`feat: M1-c Task 72` counts task 72 only); a code with a partial marker still counts; only a title with nothing but a code counts the whole group.
+
+**The description only counts through `Task` lines at the start of a line**: YUIBoard looks at the PR description only when the title has no task reference, and even then it only reads lines starting with `Task:`, `Tasks:`, `任务：` or `タスク：`, skipping code blocks. Prose, syntax examples and tool output (`Tasks: 72 successful`) do not count as delivered. So put delivered tasks in the title, or add a line `Task: <spec name>#<number>` to the description.
+
+**Task numbers in the description body only count as a record**: when the title has no working task reference, a `task <number>` or task key in the body (outside `Task` lines and code blocks) is recorded as "has a PR on record": it shows in the task details and a checked task is not reported as "checked in doc only", but it does not change the status or raise other conflicts. Milestone codes do not count, and neither does anything in a section or sentence such as "this PR does not include", "not done yet" or "not finished". Reference problems in a description `Task` line appear only in the PR details, not in "Needs confirmation"; when the title is used, only `Task` lines and the branch name are compared with it.
 
 **A link is not full delivery**: a task counts as done only when it is checked in tasks.md and has no open or not-yet-synced PR. An unchecked task with a merged linked PR is "In progress"; the title, description, milestone or a manual link cannot replace the check in the document. When local sync status is unknown, the existing fallback still requires the checkbox; a checked task with no valid PR is still "Checked in doc only".
 
-**Partial work**: put a partial marker right after the reference to record that the PR delivers part of it, keeping the evidence and label. Accepted markers: `(partial)`, `(part)`, `（部分）` / `(部分)`, `（部分完成）`, `（一部）`, and a bare `部分` with no text after it (`任务 52 部分`, `任务 99，部分`; `任务 1，部分页面改版` does not count). The marker applies to the reference right before it: a `Task N` list as a whole (`Tasks 13 and 14 (partial)` marks both); a task key only itself (`devboard-mvp#3.4 (partial)`); a milestone code marks every task that code expands to (`M0-c (partial)`). To mark items one by one, each needs `Task`: `Task 13 (partial), Task 14 (partial)`; `Task 13 (partial), 14 (partial)` only recognizes 13. When the same place (title or description) references a task both fully and partially, it counts as partial. The same markers apply when the description is used as the fallback. Partial PRs are also checked for open / not-yet-synced state; adding ordinary linked PRs or switching to a manual link does not make an unchecked task done.
+**Partial work**: put a partial marker right after the reference to record that the PR delivers part of it, keeping the evidence and label. Accepted markers: `(partial)`, `(part)`, `（部分）` / `(部分)`, `（部分完成）`, `（一部）`, and a bare `部分` with no text after it (`任务 52 部分`, `任务 99，部分`; `任务 1，部分页面改版` does not count). The marker applies to the reference right before it: a `Task N` list as a whole (`Tasks 13 and 14 (partial)` marks both); a task key only itself (`devboard-mvp#3.4 (partial)`); a milestone code marks every task that code expands to (`M0-c (partial)`). To mark items one by one, each needs `Task`: `Task 13 (partial), Task 14 (partial)`; `Task 13 (partial), 14 (partial)` only recognizes 13. When the same place (title or description) references a task both fully and partially, it counts as partial. The same markers apply in description `Task` lines. Partial PRs are also checked for open / not-yet-synced state; adding ordinary linked PRs or switching to a manual link does not make an unchecked task done.
 
 ```text
 [V2] fix(api): Acceptance probe (Task 13 (partial))
@@ -295,7 +300,7 @@ fix: devboard-mvp#3.4 (partial)
 [V2] feat(api): M0-c (partial)
 ```
 
-**Optional extras**: a line `Task: <spec name>#<number>` in the PR description; a branch name containing `task-<number>` or a milestone code. The branch name is used only when neither the title nor the description has a reference.
+**Optional extras**: a line `Task: <spec name>#<number>` in the PR description; a branch name containing `task-<number>` or a dotted number (`chat-15.2-docs`). The branch name is used only when neither the title nor a description `Task` line has a reference; milestone codes in a branch name do not count, and neither do version branches such as `release-1.15`.
 
 ```text
 Task: devboard-mvp#2.5b
@@ -303,7 +308,7 @@ Task: devboard-mvp#2.5b
 
 ```branch
 devboard/task-1.2
-feature-m0c
+feature/chat-15.2-docs
 ```
 
 ## 8. Markdown in task bodies

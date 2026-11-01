@@ -1,7 +1,8 @@
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import { setLang } from '../web/i18n.mjs'
-import { applyEdit, branchWords, commandDir, commandTexts, docIssues, isTaskDoc, parseDoc, prTitles, REF_WHERE, refProblems, titleIssues, withoutCode } from '../src/guard.mjs'
+import { applyEdit, branchWords, commandDir, commandTexts, docIssues, isTaskDoc, parseDoc, prTitles, REF_WHERE, refProblems, titleIssues } from '../src/guard.mjs'
+import { withoutCode } from '../src/refs.mjs'
 import { commandText, conventionBrief, focusOf, focusPath, guardDocText, guardHintText, guardRefText, guardTitleText, langOf, lineButton, paneOf, pickProject } from './model.mjs'
 import type { View } from './state.d.ts'
 
@@ -275,7 +276,7 @@ async function docsAt($: Engine, g: NonNullable<ReturnType<typeof guarded>>, roo
   return [...(g.summary.docs ?? []).filter((d: { docId: string }) => !ids.has(d.docId)), ...local]
 }
 
-/** 查一段文字的任务引用（N35）：按摘要有问题时，root 不为 null 就用该检出的文档重查 */
+/** 查一段文字的任务引用：按摘要有问题时，root 不为 null 就用该检出的文档重查 */
 async function refsIn($: Engine, g: NonNullable<ReturnType<typeof guarded>>, text: string, where: string, root: string | null) {
   const r = refProblems(text, g.summary.docs ?? [], where)
   return root !== null && r.deny.length + r.hint.length > 0 ? refProblems(text, await docsAt($, g, root), where) : r

@@ -48,7 +48,8 @@ export function layoutGantt(docs, views, prByNum, defaults, nowMs) {
   const factStart = (v) => {
     const cands = [
       ...v.prs.map((l) => prByNum.get(l.pr)).filter((p) => p && p.state !== 'CLOSED').map((p) => [Date.parse(p.createdAt), `PR #${p.number}`]),
-      ...v.sessions.map((s) => [Date.parse(s.firstAt), msg`会话 ${s.sessionId}`]),
+      // 没完成的任务，只提到的会话不算事实时间；已完成的任务没有 PR 时只能靠它定时间
+      ...v.sessions.filter((s) => s.workAt || done(v)).map((s) => [Date.parse(s.firstAt), msg`会话 ${s.sessionId}`]),
     ];
     return cands.sort((a, b) => a[0] - b[0])[0] ?? null;
   };

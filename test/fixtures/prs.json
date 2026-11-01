@@ -79,7 +79,7 @@
  {
   "number": 369,
   "title": "[V2] feat(collab): 界面打磨——新侧栏、消息菜单、撤回提示 (collab 2.0.6)",
-  "body": "（虚构描述）协作版 2.0.6 UI 改进轮，tasks 任务 18。",
+  "body": "（虚构描述）协作版 2.0.6 UI 改进轮。\nTask: 任务 18",
   "url": "https://github.com/acme/widget/pull/369",
   "state": "MERGED",
   "isDraft": false,

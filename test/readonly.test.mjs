@@ -94,14 +94,17 @@ const NOW = Date.parse('2026-09-26T08:00:00Z');
 const FAKE_GH = fileURLToPath(new URL('./fixtures/fake-gh.mjs', import.meta.url));
 const enc = (p) => p.replace(/[^A-Za-z0-9]/g, '-');
 const iso = (ms) => new Date(ms).toISOString();
-// 仿实物的人发消息记录（正文虚构）
-const userLine = (cwd, at, text) => JSON.stringify({ parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content: text },
-  uuid: 'u', timestamp: iso(at), userType: 'external', cwd, sessionId: 's', version: '2.0.0', gitBranch: 'main' });
+// 仿实物的人发消息记录（正文虚构），后面跟一次改代码：这些会话都真在干活
+const userLine = (cwd, at, text) => [JSON.stringify({ parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content: text },
+  uuid: 'u', timestamp: iso(at), userType: 'external', cwd, sessionId: 's', version: '2.0.0', gitBranch: 'main' }),
+JSON.stringify({ parentUuid: 'u', isSidechain: false, message: { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'Edit', input: { file_path: path.join(cwd, 'src/a.js'), old_string: 'a', new_string: 'b' } }] },
+  type: 'assistant', uuid: 'a', timestamp: iso(at), cwd, sessionId: 's', gitBranch: 'main' })].join('\n');
 // 仿实物的 Codex 记录：首行 session_meta + 一条人发 UserMessage（正文虚构）
 const codexUid = (n) => `01990000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 const codexRollout = (cwd, n, at, text) => [
   { timestamp: iso(at), ordinal: 0, type: 'session_meta', payload: { session_id: codexUid(n), id: codexUid(n), timestamp: iso(at), cwd, originator: 'test', cli_version: '0.0.0', source: 'cli' } },
   { timestamp: iso(at), ordinal: 1, type: 'event_msg', payload: { type: 'item_completed', thread_id: 'x', turn_id: 't', item: { type: 'UserMessage', id: 'u', content: [{ type: 'text', text }] } } },
+  { timestamp: iso(at), ordinal: 2, type: 'event_msg', payload: { type: 'item_completed', item: { type: 'FileChange', id: 'f', changes: { [path.join(cwd, 'src/a.js')]: { type: 'update', unified_diff: '@@' } } } } },
 ].map((o) => `${JSON.stringify(o)}\n`).join('');
 
 // 目录下全部文件与目录的相对路径、大小、mtime（含 .git）

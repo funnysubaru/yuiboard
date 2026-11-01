@@ -33,8 +33,10 @@ const session = (id, signals) => ({ source: 'claude-code', id, files: ['r/s.json
 function realBoard() {
   const doc = inline(readFileSync(new URL(`./fixtures/${DOC}.tasks.md`, import.meta.url), 'utf8'), DOC);
   const prs = JSON.parse(readFileSync(new URL('./fixtures/prs.json', import.meta.url), 'utf8')).map(normalizePr);
+  // 会话里的代号不展开，要逐个写任务号
+  const m0c = doc.tasks.filter((t) => t.groupId === doc.groups.find((g) => g.code === 'M0-c').id).map((t) => t.number);
   const sessions = [
-    session('s-m0c', [say([doc], `${DOC} 的 M0-c 开工`, '2025-09-25T01:00:00.000Z', '2025-09-25T02:30:00.000Z', 1)]),
+    session('s-m0c', [say([doc], `${DOC} 任务 ${m0c.join('、')} 开工`, '2025-09-25T01:00:00.000Z', '2025-09-25T02:30:00.000Z', 1)]),
     session('s-m0a', [say([doc], `${DOC} 任务 1.4`, '2025-09-21T02:00:00.000Z', '2025-09-21T06:00:00.000Z', 1)]),
   ];
   const sync = { 360: { state: 'synced', reason: null }, 365: { state: 'pending', reason: null } };
