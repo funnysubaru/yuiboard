@@ -6,13 +6,13 @@ import { readdir, stat, open, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { listWorktrees, parseTasksDoc } from '../docs.mjs';
-import { extractRefs, extractBranchRefs, humanRefText, sessionRefs, withoutCode, isRecordTitle } from '../refs.mjs';
+import { declarations, extractRefs, extractBranchRefs, humanRefText, sessionRefs, withoutCode, isRecordTitle } from '../refs.mjs';
 import { commandTexts } from '../guard.mjs';
 import { commandWorked, DOCS_BRANCH, isCodePath } from './bash-work.mjs';
 import { mask } from '../mask.mjs';
 import { msg } from '../msg.mjs';
 
-const CACHE_VERSION = 10; // 5：新增 command 信号；6：引用块、代码块不再产生引用；7：派活逐字段去代码；8：worked、docs 标记；9：worked 记时间；10：Bash 工作
+const CACHE_VERSION = 11; // 5：新增 command 信号；6：引用块、代码块不再产生引用；7：派活逐字段去代码；8：worked、docs 标记；9：worked 记时间；10：Bash 工作；11：declare 信号
 const TITLE_MAX = 60;
 const SNIPPET_MAX = 60; // 信号片段
 const SUMMARY_MAX = 120; // 最后一条消息摘要（design §3.7.4）
@@ -321,6 +321,8 @@ function extractSignals(state, obj, pos, isMain, { refOpts, anchors, repo, inPro
   }
   if (obj.type !== 'assistant' || !Array.isArray(blocks)) return;
   const texts = blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text);
+  // 声明排在同一条记录的工具调用之前：这条记录里的工作算声明的任务。子 agent 的声明带 lane，engine 分开算
+  for (const text of texts) noteDeclarations(state, text, pos);
   if (isMain && texts.length) {
     const text = texts.join('\n');
     // AI 回复里的任务号不产生信号（owner 已定：顺带提到不算），只计数供诊断页展示。
@@ -330,6 +332,16 @@ function extractSignals(state, obj, pos, isMain, { refOpts, anchors, repo, inPro
     if (flat) noteLastMsg(state, pos.at, mask(flat));
   }
   for (const b of blocks) if (b?.type === 'tool_use' && b.input && typeof b.input === 'object') toolSignals(state, b, pos, refOpts, anchors, inProject);
+}
+
+// AI 回复里的声明行。signal 只留任务键和遮蔽后的片段，不留回复原文。
+// 任务键会进缓存和诊断，能被遮蔽的不当任务键，算写法不对。ponytail: 文档名是 32 位以上大小写数字混合的英文长串时也会被当成这种，改名或报诊断
+export function noteDeclarations(state, text, pos) {
+  for (const { text: line, keys, bad, none } of declarations(text)) {
+    const safe = keys.filter((k) => mask(k) === k);
+    const wrong = [...keys.filter((k) => mask(k) !== k), ...bad];
+    addSignal(state, { kind: 'declare', ...pos, keys: safe, bad: wrong.map((b) => clip(mask(b), SNIPPET_MAX)), ...(none && { none }), snippet: clip(mask(line), SNIPPET_MAX) });
+  }
 }
 
 // 人发的消息：非 isMeta、非压缩摘要、origin 缺省或 human（排除任务通知、子 agent 回报）；字符串或 text 块。

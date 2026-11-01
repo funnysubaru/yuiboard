@@ -42,6 +42,8 @@ export function pickProject(entries, sessionId, cwd) {
  * 当前会话的聚焦任务（需求 5.2，owner 2026-10-12 改）：只认 devboard 的关联结果，只算未归档文档里的任务。
  * 关联里有运行中且没完成的 → 全部列出，按下面的 rank 排，keys[0] 是卡片上展开的主任务；
  * 否则取 rank 最前的一个，recent: true；这时关联的任务全都完成或作废，再标 idle: true。at = 主任务的 lastAt。
+ * 只提到过、未开始的任务不算正在做：有做过的就不看它们，全是这种时标 idle 与 mentioned。
+ * 会话主线有声明时「正在做」只看最新声明的任务，后来提到的抢不走；声明的不活跃了仍显示它，声明 none 时没有「正在做」。
  */
 export function focusOf(summary, sessionId) {
   const links = new Map();
@@ -63,11 +65,20 @@ export function focusOf(summary, sessionId) {
   const latest = (list) => list.map((l, i) => [rank(l, i), l]).sort(byRank).map((r) => r[1]);
   // 已完成、作废的任务不算「正在做」：会话做完以后还在续活动，别一直写「正在做」一个早已完成的任务
   const finished = (l) => !l.status || l.status === 'done';
-  const running = latest(linked.filter((l) => l.activity === 'running' && !finished(l)));
+  const mentioned = (l) => l.status === 'not_started';
+  const declared = summary.sessions?.find((s) => s.id === sessionId)?.declared;
+  const doing = linked.filter((l) => !finished(l) && (declared ? declared.tasks.includes(l.key) : !mentioned(l)));
+  const running = latest(doing.filter((l) => l.activity === 'running'));
   if (running.length) return { keys: running.map((l) => l.key), recent: false, at: running[0].lastAt ?? null };
   if (!linked.length) return { keys: [], recent: false, at: null };
-  const [last] = latest(linked);
-  return { keys: [last.key], recent: true, at: last.lastAt ?? null, ...(linked.every(finished) && { idle: true }) };
+  if (declared && doing.length) {
+    const [last] = latest(doing);
+    return { keys: [last.key], recent: true, at: last.lastAt ?? null };
+  }
+  const touched = linked.filter((l) => !mentioned(l));
+  const [last] = latest(touched.length ? touched : linked);
+  return { keys: [last.key], recent: true, at: last.lastAt ?? null,
+    ...(linked.every((l) => finished(l) || mentioned(l)) && { idle: true }), ...(!touched.length && { mentioned: true }) };
 }
 
 /** 展开该任务要打开的折叠键，从外到内：doc:、grp:（有分组时）、沿 parentKey 的各级祖先 task:（不含自身）。任务不存在 → []。 */
@@ -225,6 +236,16 @@ export function conventionBrief(project, root) {
 }
 
 /**
+ * 当前任务声明的规则：和约定要点分开一段，约定要点有 1,500 字的目标（需求 1.2）。
+ * 不进 conventionRules：那组要点也给 Codex 贴进 AGENTS.md。调用方先 setLang()。
+ */
+export const declarationBrief = (project) => t`- 当前任务声明：开工前和换任务时，在回复里单独写一行 \`[yuiboard] task <文档名>#<编号>\`；多个任务写在同一行，用空格隔开；不做规划任务写 \`[yuiboard] task none\`。这行可以在回复任何位置，但必须独占一行，不能放进代码块或引用块。文档名看任务文档的路径：${docNames(project).join(', ')}。`;
+
+// 声明里的文档名长什么样。不列具体文档：提示内容只随项目配置变，新增文档不打破提示缓存
+const docNames = (project) => (project.docSources ?? []).flatMap((s) => (s.type === 'task-list' ? (s.files ?? []).map((f) => `${f} → ${f.replace(/\.[^./]+$/, '')}`)
+  : s.type === 'spec-dir' ? [`${s.path}/${t('<文档名>')}/tasks.md`] : s.type === 'adr-dir' || s.type === 'md-dir' ? [`${s.path}/${t('<文档名>')}.md`] : []));
+
+/**
  * CONVENTION 三语末尾那段可贴进被看仓库 AGENTS.md / CLAUDE.md 的片段（N27 需求 5.2）：Codex 等没有插件拦截的工具靠它。
  * 与 conventionBrief 同一组要点；test/convention.test.mjs 逐语言比对文档里的代码块与这里的输出。调用方先 setLang()。
  */
@@ -290,6 +311,9 @@ export const guardHintText = (hints) => [
   t('YUIBoard：下面的编号在本项目的文档里找不到。如果是本项目的任务，先看文档核对；只用文档里真实存在的编号：'),
   ...hints.slice(0, GUARD_SHOWN).map((d) => `- ${tx(d)}`),
 ].join('\n');
+
+/** 会话改文件前还没有声明当前任务时给 AI 的提醒（不拦）。调用方先 setLang()。 */
+export const guardDeclareText = () => t('YUIBoard：本会话还没有声明当前任务。请在回复里单独写一行 `[yuiboard] task <文档名>#<编号>`，不做规划任务写 `[yuiboard] task none`。');
 
 /** 约定要点，一行一条（conventionBrief 与 CONVENTION 片段共用） */
 export const conventionRules = () => [
@@ -464,7 +488,7 @@ function focusCard({ summary, href, focus, toggled, now }) {
     ...focusPrs(summary, v, now).map(({ p, tone }) => ({ key: `focus:${first}:pr:${p.number}`, kind: 'focusPr', level: 2,
       status: PR_STATUS[tone], tone, ...(p.url && { href: p.url }), texts: [`#${p.number}`, prMark(tone), prWait(p, tone, now)] })),
   ] };
-  const head = focus.idle ? [t('本会话当前没有进行中的任务'), t('最近做的'), task.docId, focus.at && ago(focus.at, now)].filter(Boolean)
+  const head = focus.idle ? [t('本会话当前没有进行中的任务'), focus.mentioned ? t('最近提到的') : t('最近做的'), task.docId, focus.at && ago(focus.at, now)].filter(Boolean)
     : focus.recent ? [t('本会话最近做的'), task.docId, focus.at && ago(focus.at, now)].filter(Boolean)
     : [t('本会话正在做'), task.docId];
   const focusHead = [{ key: 'focus', kind: 'focusHead', level: 0, texts: [head.join(' · ')] }];

@@ -233,6 +233,16 @@ test('人发：自动化心跳、回答 Codex 提问整条不算人发', async (
   assert.equal(s.title, null);
 });
 
+test('声明行：根会话的助手回复出 declare 信号；代码块、普通文字不出', async () => {
+  const { s } = await scanRoot(() => [
+    userItem(T('01:00'), 1, '开始'),
+    aiMsg(T('01:01'), 2, '开工\n[yuiboard] task demo#4'),
+    aiMsg(T('01:02'), 3, '```\n[yuiboard] task demo#5\n```\n提到 [yuiboard] task demo#6'),
+    aiMsg(T('01:03'), 4, '[yuiboard] task none'),
+  ]);
+  assert.deepEqual(s.signals.filter((g) => g.kind === 'declare').map((g) => [g.at, g.keys, Boolean(g.none)]), [[T('01:01'), ['demo#4'], false], [T('01:03'), [], true]]);
+});
+
 test('助手公开回复：不出信号，提到任务号只计 aiOnlyMentions；摘要取最后一条消息；reasoning / 工具输出不进摘要', async () => {
   const { s, cache } = await scanRoot(() => [
     userItem(T('01:00'), 1, '看看进度'),
@@ -621,5 +631,5 @@ test('37 Codex：建分支、读不出标题的提交、Bash 写文件标在当�
 test('37 Codex 缓存版本随 Bash 工作的口径升级', async () => {
   const { records, opts } = await makeSpace();
   const r = await scan({ ...opts, dir: records, docs: [] });
-  assert.equal(r.cache.v, 6);
+  assert.equal(r.cache.v, 7);
 });

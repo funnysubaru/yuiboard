@@ -876,7 +876,7 @@ test('37.3 tee 跳过重定向后的真实输出文件照算', () => expectWork(
 
 test('37 会话缓存版本随 Bash 工作的口径升级', async () => {
   const { cache } = await scanOne((repo) => [human(repo, T('01:00'), '做任务 1')]);
-  assert.equal(cache.v, 10);
+  assert.equal(cache.v, 11);
 });
 
 test('37.3 有 -c / -e 或运行脚本文件时 heredoc 是数据', () => expectWork(false, () => [
@@ -970,4 +970,43 @@ test('37.1 git worktree add 的新分支名优先于起点，非 docs 分支照�
 test('37.1 git worktree add 的带值选项不占位置参数', async () => {
   await expectWork(false, () => ['git worktree add --lock --reason keep ../wt docs/x']);
   await expectWork(true, () => ['git worktree add --lock --reason keep ../wt feature/x', 'git worktree add --orphan feature/x ../wt']);
+});
+
+
+test('声明行：主线与子 agent 各出 declare 信号；代码块、引用块、普通文字不出；缓存不含对话原文', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const reply = (ts, text) => JSON.stringify({ parentUuid: 'u', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text }] }, type: 'assistant', uuid: 'a', timestamp: ts, cwd: repo, sessionId: 's', gitBranch: 'main' });
+  const proj = path.join(records, enc(repo));
+  await put(path.join(proj, 's1.jsonl'), jsonl(
+    user(repo, '2026-09-01T01:00:00Z'),
+    reply('2026-09-01T01:01:00Z', '开工。\n[yuiboard] task plan#1 plan#2\n（虚构）哨兵'),
+    reply('2026-09-01T01:02:00Z', '```\n[yuiboard] task plan#3\n```\n> [yuiboard] task plan#4\n正文里 [yuiboard] task plan#5 不算'),
+    reply('2026-09-01T01:03:00Z', '[yuiboard] task none'),
+    reply('2026-09-01T01:04:00Z', '[yuiboard] task 错 plan#6'),
+  ));
+  await put(path.join(proj, 's1/subagents/agent-a.jsonl'), jsonl(reply('2026-09-01T01:05:00Z', '[yuiboard] task plan#7')));
+  await put(path.join(proj, 's1/subagents/agent-a.meta.json'), JSON.stringify({ toolUseId: 'tool-1' }));
+  const { sessions: [s], cache } = await scan({ ...opts, knownDocIds: ['plan'] });
+  assert.deepEqual(s.signals.filter((g) => g.kind === 'declare').map((g) => [g.at.slice(14, 16), g.keys, g.bad, Boolean(g.none), g.lane ?? null, g.snippet]), [
+    ['01', ['plan#1', 'plan#2'], [], false, null, '[yuiboard] task plan#1 plan#2'],
+    ['03', [], [], true, null, '[yuiboard] task none'],
+    ['04', ['plan#6'], ['错'], false, null, '[yuiboard] task 错 plan#6'],
+    ['05', ['plan#7'], [], false, 'tool-1', '[yuiboard] task plan#7'],
+  ]);
+  assert.ok(!JSON.stringify(cache).includes('哨兵'));
+});
+
+test('声明行：敏感内容写成文档名也不进缓存和诊断', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const secret = `ghp_${'a1B2'.repeat(9)}`;
+  const reply = (ts, text) => JSON.stringify({ parentUuid: 'u', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text }] }, type: 'assistant', uuid: 'a', timestamp: ts, cwd: repo, sessionId: 's', gitBranch: 'main' });
+  await put(path.join(records, enc(repo), 's1.jsonl'), jsonl(user(repo, '2026-09-01T01:00:00Z'), reply('2026-09-01T01:01:00Z', `[yuiboard] task ${secret}#1`)));
+  const { sessions, cache } = await scan(opts);
+  assert.ok(!JSON.stringify(cache).includes(secret), '缓存');
+  const g = sessions[0].signals.find((x) => x.kind === 'declare');
+  assert.deepEqual(g.keys, [], '遮蔽后对不上，不当任务键');
+  assert.equal(g.bad.length, 1);
+  const { conflicts } = linkSessions([{ docId: 'plan', groups: [], ...parseTasksDoc('- [ ] 1 一\n', 'plan') }], sessions, [], new Map(), { id: 'demo' });
+  assert.equal(conflicts.length, 1);
+  assert.ok(!conflicts[0].detail.includes(secret), '诊断');
 });

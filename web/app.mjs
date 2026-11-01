@@ -1936,12 +1936,14 @@ function diagSessions(board, fold) {
     ...s.unreadableFiles.map((f) => t`${f.file}：读取失败（${tx(f.error)}）`),
     ...s.brokenLines.map((f) => t`${f.file}：${f.count} 行读不懂，已跳过`),
   ]);
+  const rate = board.diagnostics.declarations;
   return [
     sources.map((s) => h('div', {},
       t`${SESSION_SOURCE_TEXT[s.source] ?? s.source}：${s.dir ?? t('未知目录')} · `,
       s.available ? t`${s.sessions} 个会话` : h('span', { class: 'flag' }, t`不可用：${tx(s.error)}`),
       s.messages.map((m) => h('div', { class: 'flag' }, tx(m))))),
     h('div', {}, t`识别出任务的会话 ${n.linked} 个 · 识别不出任务的 ${n.unlinked} 个 · 只在 AI 回复里被提到的 ${n.aiOnlyMentions} 次（不计）`),
+    rate?.started > 0 && h('div', {}, t`声明率：最近 ${rate.days} 天开工的 Claude Code 会话 ${rate.started} 个，写了当前任务声明的 ${rate.declared} 个（${Math.round(rate.declared / rate.started * 100)}%）`),
     bad.length > 0 && more(t`读不懂的文件 ${bad.length} 个，可展开`, bad, fold),
     board.degraded.noSessionData && h('div', { class: 'flag' }, t('会话来源全部不可用：「进行中」只按文档标记判定')),
   ];

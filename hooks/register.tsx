@@ -2,8 +2,8 @@ import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import { setLang } from '../web/i18n.mjs'
 import { applyEdit, branchWords, commandDir, commandTexts, docIssues, isTaskDoc, parseDoc, prTitles, REF_WHERE, refProblems, titleIssues } from '../src/guard.mjs'
-import { withoutCode } from '../src/refs.mjs'
-import { commandText, conventionBrief, focusOf, focusPath, guardDocText, guardHintText, guardRefText, guardTitleText, langOf, lineButton, paneOf, pickProject } from './model.mjs'
+import { declarations, withoutCode } from '../src/refs.mjs'
+import { commandText, conventionBrief, declarationBrief, focusOf, focusPath, guardDeclareText, guardDocText, guardHintText, guardRefText, guardTitleText, langOf, lineButton, paneOf, pickProject } from './model.mjs'
 import type { View } from './state.d.ts'
 
 // 钩子模块（design §5）：会话开始 / 结束、/yuiboard、轮询、面板绘制。只做摆放，不含文案。
@@ -21,6 +21,7 @@ const REV = { plugin: 'yuiboard', key: 'rev' } as const
 const AUTO_OPENED = { plugin: 'yuiboard', key: 'autoOpened' } as const
 const VIEW = { plugin: 'yuiboard', key: 'view' } as const
 const LINE = { plugin: 'yuiboard', key: 'line' } as const
+const DECLARED_IN = { plugin: 'yuiboard', key: 'declaredIn' } as const
 
 /** 顶部横幅的三种原因（design §7）；paneOf 负责翻译成文字 */
 export type Problem =
@@ -31,7 +32,7 @@ export type Problem =
 // 摘要是 Board 的同构子集（design §3.1），形状由 web/app.mjs 的口径函数认，这里不重复声明
 type Summary = any
 export type Projects = { errors: unknown[]; warnings: unknown[]; projects: { id: string; name: string; [k: string]: unknown }[] }
-export type Focus = { keys: string[]; recent: boolean; idle?: boolean }
+export type Focus = { keys: string[]; recent: boolean; idle?: boolean; mentioned?: boolean }
 
 /** 轮询得到的数据：模块变量，不进 $.state（design §3.2）。任务 6 的 ui.render 读它组装 paneOf 的输入 */
 export type Polled = {
@@ -323,6 +324,23 @@ async function answer(r: Refs, run: () => Promise<any>) {
 }
 
 /**
+ * 改文件前的提醒：改的是本项目检出里的文件、这个会话还没写过声明时，把提醒随工具结果给模型，不拦。
+ * 判断不了（认不出项目、服务连不上）就不提醒。ponytail: Bash 改文件不提醒，靠 Write / Edit 就能覆盖绝大多数会话
+ */
+async function declareHint($: Engine, file: string) {
+  const g = guarded()
+  if (!g || (await $.state.get(DECLARED_IN)).value === (await $.session.id())) return null
+  const root = await checkoutRoot($, file.slice(0, file.lastIndexOf('/')), g.summary.workspaces ?? [])
+  return root === null ? null : guardDeclareText()
+}
+
+async function reminded($: Engine, file: string, run: () => Promise<any>) {
+  const hint = await declareHint($, file)
+  const ran = await run()
+  return hint !== null && ran.deny === undefined ? { ...ran, context: [...(ran.context ?? []), hint] } : ran
+}
+
+/**
  * from（目录）所在检出的根：本身是某个工作区，或是工作区的 git worktree（`.git` 是文件，写着
  * `gitdir: <工作区>/.git/worktrees/…`）；都不是返回 null。只读：$.fs.exists / read。
  * ponytail: 不解析符号链接，工作区路径与文件路径写法不同（/var 与 /private/var）时认不出，认不出只是不检查。
@@ -417,7 +435,8 @@ export const register: Register = (on, options) => {
     if (project === undefined) return r
     // 组要点出错就照原样返回：不能因为 YUIBoard 让系统提示组不出来（需求 2.6 同理）
     try {
-      return { sections: [...r.sections, { id: 'yuiboard:convention', text: conventionBrief(project, $.plugin.root), scope: 'session' as const }] }
+      return { sections: [...r.sections, { id: 'yuiboard:convention', text: conventionBrief(project, $.plugin.root), scope: 'session' as const },
+        { id: 'yuiboard:declaration', text: declarationBrief(project), scope: 'session' as const }] }
     } catch {
       return r
     }
@@ -425,11 +444,21 @@ export const register: Register = (on, options) => {
 
   // N27 写的时候拦截（需求 2）：见 docGuard / titleGuard。检查本身出错一律放行（需求 2.6），不因 YUIBoard 卡住用户
   const off = options.guard === 'off'
-  on('tool.call', { tool: 'Write' }, async ($, e, next) => (off ? null : await docGuard($, e.file_path, () => e.content)) ?? next(e))
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => (off ? next(e)
+    : (await docGuard($, e.file_path, () => e.content)) ?? reminded($, e.file_path, () => next(e))))
     .catch(($, e, next) => next(e))
-  on('tool.call', { tool: 'Edit' }, async ($, e, next) => (off ? null
-    : await docGuard($, e.file_path, before => applyEdit(before, e.old_string, e.new_string, e.replace_all === true))) ?? next(e))
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => (off ? next(e)
+    : (await docGuard($, e.file_path, before => applyEdit(before, e.old_string, e.new_string, e.replace_all === true))) ?? reminded($, e.file_path, () => next(e))))
     .catch(($, e, next) => next(e))
+  // 看模型的回复，记下这个会话写过声明（主线、子 agent 都算）。记会话 id：/clear 后是新会话
+  on('session.append', { door: 'response' }, async ($, e, next) => {
+    if (!off && Array.isArray(e.message.content)) {
+      for (const b of e.message.content) {
+        if (b.type === 'text' && declarations(b.text).length > 0) await $.state.set(DECLARED_IN, await $.session.id())
+      }
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     if (off) return next(e)
     return (await titleGuard($, e.command)) ?? answer(await commandGuard($, e.command), () => next(e))

@@ -87,7 +87,7 @@ test('认出项目后在系统提示末尾加约定摘要（session 一侧），
   expect(s?.text).toContain('One')
   expect(s?.text).toContain('.claude/specs/*/tasks.md')
   expect(s?.text).toContain('/CONVENTION.zh-CN.md')
-  expect((await $.prompt.compose(COMPOSE)).sections.at(-1)?.id).toBe('yuiboard:convention')
+  expect((await $.prompt.compose(COMPOSE)).sections.at(-1)?.id).toBe('yuiboard:declaration')
 })
 
 test('认不出项目时不加', async ($, on) => {
@@ -301,4 +301,62 @@ test('认出项目后服务断线：拦截停下、全部放行；服务恢复�
   await w.clock.advance(5000)
   expect(await call($, bad)).toContain('YUIBoard')
   expect(w.ran).toEqual(['Write', 'Bash'])
+})
+
+// ---- 声明规则与提醒 ----
+const reply = ($: Engine, text: string, agentId?: string) => $.session.append({
+  message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text }] }, door: 'response',
+  origin: { kind: 'model', model: 'm' }, uuid: 'u', ...(agentId && { agentId }),
+} as never)
+const contextOf = async ($: Engine, input: Record<string, unknown>) => ((await $.tool.call(input as never)) as { context?: string[] }).context ?? []
+const WRITE = { tool: 'Write', file_path: '/w/one/src/x.mjs', content: 'x' }
+
+test('注入里有声明规则，并说明到哪里找文档名', { options: { lang: 'zh' } }, async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  const s = (await $.prompt.compose(COMPOSE)).sections.find(x => x.id === 'yuiboard:declaration')
+  expect(s?.scope).toBe('session')
+  expect(s?.text).toContain('[yuiboard] task <文档名>#<编号>')
+  expect(s?.text).toContain('[yuiboard] task none')
+  expect(s?.text).toContain('.claude/specs/<文档名>/tasks.md')
+})
+
+test('项目里改文件前还没声明：提醒、不拦；声明后不再提醒', { options: { lang: 'zh' } }, async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  const ctx = await contextOf($, WRITE)
+  expect(w.ran).toEqual(['Write'])
+  expect(ctx.join('\n')).toContain('[yuiboard] task')
+  await reply($, '普通回复，提到 [yuiboard] task a#1 不算')
+  expect((await contextOf($, WRITE)).length).toBe(1)
+  await reply($, '开工\n[yuiboard] task a#1')
+  expect(await contextOf($, WRITE)).toEqual([])
+})
+
+test('none 也算声明；子 agent 写的声明也算这个会话有声明', async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  await reply($, '[yuiboard] task none', 'agent-1')
+  expect(await contextOf($, WRITE)).toEqual([])
+})
+
+test('项目外的文件不提醒', async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  expect(await contextOf($, { tool: 'Write', file_path: '/tmp/x.txt', content: 'x' })).toEqual([])
+})
+
+test('guard 为 off 时不提醒', { options: { guard: 'off' } }, async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  expect(await contextOf($, WRITE)).toEqual([])
+})
+
+test('服务连不上时不提醒、照常写', async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  w.offline = true
+  await w.clock.advance(5000)
+  expect(await contextOf($, WRITE)).toEqual([])
+  expect(w.ran).toEqual(['Write'])
 })
