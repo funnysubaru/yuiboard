@@ -111,11 +111,22 @@ function prTitlesOf(words) {
  * @returns {{ text: string, branch: boolean, pr?: true, dir: string|null }[]}
  */
 export function commandTexts(command) {
+  return commandSteps(command).flatMap(stepTexts);
+}
+
+/**
+ * 把一条 Bash 命令拆成逐条动作，commandTexts 与会话读取（认工作）共用，这里不判断动作的含义。
+ * words 是分好的词（还带 from、gt：见 commands），i 是命令名的下标，dir 见 commandTexts；git 命令的 git 是子命令下标、gitDir 算上了 `git -C`，
+ * 其余命令 git 为 -1。heredocs 是这条命令自己的 heredoc 正文。heredoc 没有结束行时分不清正文与命令，返回空数组。
+ * @param {string} command
+ * @returns {{ words: any[], i: number, dir: string|null, git: number, gitDir: string|null, heredocs: string[], text: string, bodies: string[] }[]}
+ */
+export function commandSteps(command) {
   const bodies = [];
   const text = stripHeredocs(String(command), bodies);
   if (text === null) return [];
-  const out = [];
-  const subject = (s) => s.split('\n').map((l) => l.trim()).find(Boolean);
+  const steps = [];
+  const openersBefore = (at) => [...heredocOpeners(text.slice(0, at))].length;
   let cwd = ''; // 这条命令之前的 cd 走到的目录
   // 按命令的先后输出：扫描器给同一时刻的信号排序时，后续活动只续最后一条，顺序反了焦点就落到先做的那个任务上（PR #54 review）
   const cmds = commands(text);
@@ -128,28 +139,41 @@ export function commandTexts(command) {
     if ((i < 0 || typeof words[i] !== 'string' || PERSIST_ENV.has(words[i])) && words.some(isGitPathVar)) cwd = null;
     // 管道里每一段都在子 shell 里跑，这里的 cd 不影响后面
     if (words[i] === 'cd') cwd = before === '|' || words.sep === '|' ? null : enter(cwd, words[i + 1]);
-    let dir = words.slice(0, i).some(isGitPathVar) ? null : cwd;
-    out.push(...prTitlesOf(words).map((t) => ({ text: t.title, branch: false, pr: true, dir })));
-    if (words[i] !== 'git') continue;
-    // git 的全局选项：-C <路径>、-c <键=值> 带值，其余不带
-    for (i++; typeof words[i] === 'string' && words[i].startsWith('-'); i++) {
-      if (words[i] === '-C') dir = enter(dir, words[++i]);
-      else if (words[i] === '-c') i++;
-      else if (/^--(git-dir|work-tree)\b/.test(words[i])) dir = null;
+    const dir = words.slice(0, i).some(isGitPathVar) ? null : cwd;
+    const step = { words, i, dir, git: -1, gitDir: dir, text, bodies,
+      heredocs: bodies.slice(openersBefore(words.from), openersBefore(cmds[n + 1]?.from ?? text.length)) };
+    if (words[i] === 'git') {
+      // git 的全局选项：-C <路径>、-c <键=值> 带值，其余不带
+      let g = i + 1;
+      for (; typeof words[g] === 'string' && words[g].startsWith('-'); g++) {
+        if (words[g] === '-C') step.gitDir = enter(step.gitDir, words[++g]);
+        else if (words[g] === '-c') g++;
+        else if (/^--(git-dir|work-tree)\b/.test(words[g])) step.gitDir = null;
+      }
+      step.git = g;
     }
-    const sub = words[i] === 'worktree' && words[i + 1] === 'add' ? 'worktree' : words[i];
-    const flag = { commit: /^-[A-Za-z]*m$|^--message$/, worktree: /^-[bB]$/, checkout: /^-[bB]$/, switch: /^-[cC]$|^--create$/ }[sub];
-    if (!flag) continue;
-    for (let j = i + 1; j < words.length; j++) {
-      const w = words[j];
-      if (typeof w !== 'string') continue;
-      const inline = sub === 'commit' && w.startsWith('--message=') ? w.slice('--message='.length) : undefined;
-      if (inline === undefined && !flag.test(w)) continue;
-      const v = inline ?? words[j + 1];
-      const t = sub !== 'commit' ? v : typeof v === 'string' ? subject(v) : v && subject(ownHeredoc(text, v, bodies) ?? '');
-      if (typeof t === 'string' && t) out.push({ text: t, branch: sub !== 'commit', dir });
-      break; // 只取第一处：第二个 -m 是提交正文
-    }
+    steps.push(step);
+  }
+  return steps;
+}
+
+/** commandSteps 的一步里能读出的文字，见 commandTexts */
+export function stepTexts({ words, i, dir, git, gitDir, text, bodies }) {
+  const out = prTitlesOf(words).map((t) => ({ text: t.title, branch: false, pr: true, dir }));
+  if (git < 0) return out;
+  const subject = (s) => s.split('\n').map((l) => l.trim()).find(Boolean);
+  const sub = words[git] === 'worktree' && words[git + 1] === 'add' ? 'worktree' : words[git];
+  const flag = { commit: /^-[A-Za-z]*m$|^--message$/, worktree: /^-[bB]$/, checkout: /^-[bB]$/, switch: /^-[cC]$|^--create$/ }[sub];
+  if (!flag) return out;
+  for (let j = git + 1; j < words.length; j++) {
+    const w = words[j];
+    if (typeof w !== 'string') continue;
+    const inline = sub === 'commit' && w.startsWith('--message=') ? w.slice('--message='.length) : undefined;
+    if (inline === undefined && !flag.test(w)) continue;
+    const v = inline ?? words[j + 1];
+    const t = sub !== 'commit' ? v : typeof v === 'string' ? subject(v) : v && subject(ownHeredoc(text, v, bodies) ?? '');
+    if (typeof t === 'string' && t) out.push({ text: t, branch: sub !== 'commit', dir: gitDir });
+    break; // 只取第一处：第二个 -m 是提交正文
   }
   return out;
 }
@@ -219,7 +243,7 @@ const heredocOpeners = (s) => s.matchAll(/(?<!<)<<(?!<)(-?)[ \t]*(?:'([^']*)'|"(
 
 // 极简 shell 分词：按控制符切成多条命令，每条是词的数组；读不出字面值的词（含 $、`）记成 { text, at }（原样文字与起点下标），
 // 调用方只认字符串，commandTexts 拿它找自己的 heredoc。每条命令的 sep 是切开它的控制符：'&&'、'||'、'|'（含 |&）、'&'（后台）、
-// ';'、'\n'，重定向里的 &、|（2>&1、&>、>|）是 ''。
+// ';'、'\n'，重定向里的 &、|（2>&1、&>、>|）是 ''。from 是第一个词的起点，gt 是引号外每个 > 的下标（词里分不清引号，认重定向用）。
 // ponytail: 不处理 $'…'、子 shell 里的命令；这些情况的标题按读不出放行。
 function commands(s) {
   const cmds = [];
@@ -229,7 +253,10 @@ function commands(s) {
   let opaque = false;
   let at = 0; // 当前词的起点
   const end = () => {
-    if (has) words.push(opaque ? { text: word, at } : word);
+    if (has) {
+      words.from ??= at;
+      words.push(opaque ? { text: word, at } : word);
+    }
     word = ''; has = false; opaque = false;
   };
   const cut = (sep) => {
@@ -257,6 +284,10 @@ function commands(s) {
       word += s[++i]; has = true;
     } else if (c === '$' || c === '`') {
       opaque = true; has = true; word += c;
+    } else if (c === '#' && !has) {
+      // 词首的 # 起注释（引号里、转义的、词中间的不是），一直到行尾
+      const nl = s.indexOf('\n', i);
+      i = (nl < 0 ? s.length : nl) - 1;
     } else if (/\s/.test(c) && c !== '\n') {
       end();
     } else if (c === '\n' || c === ';' || c === '&' || c === '|') {
@@ -266,6 +297,7 @@ function commands(s) {
       else if (/[<>]/.test(s[i - 1] ?? '') || (c === '&' && s[i + 1] === '>')) sep = '';
       cut(sep);
     } else {
+      if (c === '>') (words.gt ??= []).push(i);
       word += c; has = true;
     }
   }

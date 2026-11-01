@@ -679,3 +679,295 @@ test('36.7 fork + lane 读取到引擎：派给子 agent 的任务 2 不算 fork
   const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
   assert.deepEqual(links.filter((l) => l.workAt).map((l) => [l.sessionId, l.taskKey]).sort(), [['a-root', 'collab-m0-space-run#2'], ['b-fork', 'collab-m0-space-run#1']]);
 });
+
+// 每条命令单独一个焦点段，看它有没有在这一段标上 worked。cwd 给了就是这条命令所在记录的工作目录。
+async function workedByCommand(cases) {
+  const { s, repo } = await scanOne((repo) => cases(repo).flatMap(([command, cwd], i) => {
+    const mm = String(i).padStart(2, '0');
+    return [human(repo, T(`01:${mm}`), `做任务 ${i + 1}`), ai(cwd ?? repo, `2026-09-20T01:${mm}:30.000Z`, [tool('Bash', { command })])];
+  }));
+  return { repo, worked: s.signals.filter((x) => x.kind === 'prompt').map((x) => Boolean(x.worked)) };
+}
+const expectWork = async (want, cases) => {
+  const list = (repo) => cases(repo).map((c) => (Array.isArray(c) ? c : [c]));
+  const { worked } = await workedByCommand(list);
+  const names = list('/repo').map(([c]) => c);
+  assert.deepEqual(names.map((c, i) => [c, worked[i]]), names.map((c) => [c, want]));
+};
+
+test('37.1 新建 worktree 或分支算工作，分支名没有任务号也算', () => expectWork(true, () => [
+  'git worktree add ../wt -b v2/t9-heap origin/main',
+  'git worktree add ../wt feature/x',
+  'git switch -c feature/x',
+  'git switch --create feature/x',
+  'git checkout -b feature/x',
+  'git branch feature/x',
+  'git branch feature/x origin/main',
+  'git -C /elsewhere/repo branch "$NAME"',
+]));
+
+test('37.1 看分支、删分支、切已有分支不算', () => expectWork(false, () => [
+  'git branch',
+  'git branch -a',
+  'git branch --show-current',
+  'git branch -d feature/x',
+  'git branch > /tmp/branches',
+  'git worktree list',
+  'git worktree remove ../wt',
+  'git checkout main',
+  'git switch main',
+  'echo git branch feature/x',
+]));
+
+test('37.2 非 docs 提交都算工作，读不出标题也算', () => expectWork(true, () => [
+  'git commit -m "fix: 修解析"',
+  'git commit -F msg.txt',
+  'git commit --file=msg.txt',
+  'git commit -m "$MSG"',
+  'git commit --amend --no-edit',
+  `git commit -F - <<'EOF'\nfix: 修解析\nEOF`,
+  `git commit -m "$(cat <<'EOF'\nfeat: 加接口\nEOF\n)"`,
+]));
+
+test('37.2 读得出的 docs 提交只算提到，含 -F - 的 heredoc', () => expectWork(false, () => [
+  'git commit -m "docs: 回写"',
+  `git commit -F - <<'EOF'\ndocs(x): 回写\nEOF`,
+  `git commit -m "$(cat <<'EOF'\nchore(version): 2.0.1\nEOF\n)"`,
+  'git commit-tree HEAD^{tree}',
+  `W=/tmp/wt; cd $W && git add -A && git commit -q --signoff -F - <<'EOF'\ndocs: 记录决定\n\n- 正文\nEOF\ngit push -q origin HEAD:main && git log --oneline -1`,
+]));
+
+test('37.1 docs 分支是为了写文档，和 docs 提交同口径只算提到', () => expectWork(false, () => [
+  'git worktree add -q -b docs/adr-decisions /tmp/wt origin/main',
+  'git switch -c docs/x',
+  'git checkout -b docs-x',
+  'git branch docs/x',
+]));
+
+test('37.3 工作目录内写非 Markdown 文件算工作', () => expectWork(true, (repo) => [
+  `sed -i '' 's/a/b/' src/a.mjs`,
+  `sed -i.bak -e 's/a/b/' src/a.mjs`,
+  `sed -Ei 's/a/b/' ${repo}/src/a.mjs`,
+  'echo x > src/a.mjs',
+  'echo x>>src/a.mjs',
+  `cat > src/a.mjs <<'EOF'\nconst a = 1;\nEOF`,
+  'printf x | tee src/a.mjs',
+  'printf x | tee -a src/a.mjs README.md',
+  `cd ${repo}/src && echo x > a.mjs`,
+  `python3 - <<'EOF'\np='src/a.mjs'\nt=open(p,encoding='utf8').read()\nopen(p,'w',encoding='utf8').write(t)\nEOF`,
+  `python3 - <<'EOF'\nfrom pathlib import Path\nPath('src/a.mjs').write_text('x')\nEOF`,
+  `python3 -c "open('src/a.mjs', 'a').write('x')"`,
+  `node -e "require('fs').writeFileSync('src/a.mjs', 'x')"`,
+  `node --input-type=module <<'EOF'\nimport { writeFileSync } from 'node:fs';\nconst f = 'src/a.mjs';\nwriteFileSync(f, 'x');\nEOF`,
+  ['echo x > a.mjs', `${repo}/src`],
+  `cd ${repo} && git status && python3 - <<'EOF'\np='src/a.mjs'\nopen(p,'w').write('x')\nEOF\ngit status`,
+]));
+
+test('37.3 丢弃、临时目录、工作目录外、Markdown、只读都不算', () => expectWork(false, (repo) => [
+  'npm test > /dev/null 2>&1',
+  'npm test 2>/dev/null',
+  'npm test 2> src/err.mjs',
+  'npm test >&2',
+  'git log > /tmp/a.mjs',
+  `git log > /private/tmp/x/a.mjs`,
+  `git log > /var/folders/ab/T/a.mjs`,
+  'git log > /elsewhere/a.mjs',
+  'git log > ../outside.mjs',
+  'git log > ~/a.mjs',
+  'git log > "$OUT/a.mjs"',
+  'npm test > test.log 2>&1',
+  'npm test | tee out.txt',
+  'echo x > NEXT.md',
+  `cat >> docs/plan.md <<'EOF'\nconst a = 1;\nEOF`,
+  `sed -i '' 's/a/b/' NEXT.md`,
+  `sed -n '1,5p' src/a.mjs`,
+  `sed 's/a/b/' src/a.mjs`,
+  `sed -i '' 's/a/b/' /tmp/a.mjs`,
+  'tee /tmp/a.mjs',
+  `grep ">" src/a.mjs`,
+  `grep "a > b.mjs" src/a.mjs`,
+  `awk '$1 > 5' src/a.mjs`,
+  `cat <<'EOF'\necho x > src/a.mjs\nEOF`,
+  `python3 - <<'EOF'\nprint(open('src/a.mjs').read())\nEOF`,
+  `python3 - <<'EOF'\nif 2 > 1: open('/tmp/a.mjs', 'w').write('x')\nEOF`,
+  `python3 - <<'EOF'\nopen('NEXT.md', 'w').write('x')\nEOF`,
+  `python3 - <<'EOF'\nimport sys\nopen(sys.argv[1], 'w').write('x')\nEOF`,
+  'python3 scripts/gen.py',
+  `node -e "require('fs').readFileSync('src/a.mjs')"`,
+  `echo 'open("src/a.mjs", "w")'`,
+  ['echo x > a.mjs', '/tmp/devboard-fake-scratch'],
+  [`cd /tmp/scratch && cat > a.mjs <<'EOF'\nx\nEOF`],
+  [`(cd /tmp/scratch && echo x > a.mjs)`],
+]));
+
+test('37.3 cwd 写在 worktree 下的相对路径算工作，用的是这条记录当时的工作目录', async () => {
+  const { s } = await scanOne((repo) => {
+    const wt = path.join(repo, '.claude/worktrees/x');
+    return [human(repo, T('01:00'), '做任务 1'), human(wt, T('01:05'), '做任务 2'), ai(wt, T('01:06'), [tool('Bash', { command: 'echo x > src/a.mjs' })]),
+      human(repo, T('01:10'), '做任务 3'), ai('/tmp/devboard-fake-scratch', T('01:11'), [tool('Bash', { command: 'echo x > src/a.mjs' })])];
+  });
+  assert.deepEqual(s.signals.filter((x) => x.kind === 'prompt').map((x) => [x.refs.nums[0], Boolean(x.worked)]), [['1', false], ['2', true], ['3', false]]);
+});
+
+test('37 读取到引擎：开场只点名不算，建 worktree、脚本改代码后任务算在做；只讨论的会话不算', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const dir = path.join(records, enc(repo));
+  const said = '你负责 collab-m0-space-run 的任务 2.5b';
+  await put(path.join(dir, 'a-talk.jsonl'), jsonl(human(repo, T('01:00'), said), ai(repo, T('01:01'), [text('（虚构）看一下')])));
+  await put(path.join(dir, 'b-work.jsonl'), jsonl(human(repo, T('01:02'), said),
+    ai(repo, T('01:03'), [tool('Bash', { command: 'git worktree add ../wt -b v2/t9-heap' })])));
+  const { sessions } = await scan(sigOpts(opts));
+  const doc = { docId: 'collab-m0-space-run', archived: false, ...parseTasksDoc('- [ ] 2.5b 一\n', 'collab-m0-space-run') };
+  const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
+  assert.deepEqual(links.map((l) => [l.sessionId, Boolean(l.workAt)]), [['a-talk', false], ['b-work', true]]);
+});
+
+test('37 fork 只复制 Bash 工作不算，分支名不放宽：没有任务号的分支不换焦点', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const dir = path.join(records, enc(repo));
+  const lines = [human(repo, T('01:00'), '继续做 collab-m0-space-run 的任务 2.5b'), ai(repo, T('01:05'), [tool('Bash', { command: 'git switch -c feature/x' })])];
+  await put(path.join(dir, 'a-root.jsonl'), jsonl(...lines));
+  await put(path.join(dir, 'b-copy.jsonl'), jsonl(...lines));
+  const { sessions } = await scan(sigOpts(opts));
+  assert.deepEqual(sessions[0].signals.map((x) => x.kind), ['prompt'], '分支名认不出任务不新增 command 信号');
+  const doc = { docId: 'collab-m0-space-run', archived: false, ...parseTasksDoc('- [ ] 2.5b 一\n', 'collab-m0-space-run') };
+  const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
+  assert.deepEqual(links.filter((l) => l.workAt).map((l) => l.sessionId), ['a-root']);
+});
+
+test('37.3 脚本里的字符串、注释样例不是写入', () => expectWork(false, () => [
+  `python3 - <<'EOF'\nprint("open('src/a.mjs', 'w')")\nEOF`,
+  `python3 - <<'EOF'\n# open('src/a.mjs', 'w').write('x')\nEOF`,
+  `python3 - <<'EOF'\n"""\nopen('src/a.mjs', 'w')\n"""\nprint(1)\nEOF`,
+  `python3 - <<'EOF'\nprint("Path('src/a.mjs').write_text('x')")\nEOF`,
+  `python3 -c "print('open(1, 2)'); print(\\"open('src/a.mjs', 'w')\\")"`,
+  `python3 - <<'EOF'\n# p='src/a.mjs'\nopen(p, 'w')\nEOF`,
+  `python3 - <<'EOF'\np=f'src/{x}.mjs'\nopen(p, 'w')\nEOF`,
+  `python3 - <<'EOF'\nopen('src/a.mjs', 'r').read()  # 不是 'w'\nEOF`,
+  `python3 - <<'EOF'\nprint('没收尾 open("src/a.mjs", "w")\nEOF`,
+  `node -e "console.log('writeFileSync(\\\"src/a.mjs\\\", 1)')"`,
+  `node - <<'EOF'\nconsole.log("writeFileSync('src/a.mjs', 'x')");\nEOF`,
+  `node - <<'EOF'\n// writeFileSync('src/a.mjs', 'x');\n/* appendFileSync('src/a.mjs', 'x'); */\nEOF`,
+  "node - <<'EOF'\nconsole.log(`writeFileSync('src/a.mjs', 'x')`);\nEOF",
+  "node - <<'EOF'\nconst f = `src/${x}.mjs`;\nwriteFileSync(f, 'x');\nEOF",
+]));
+
+test('37.3 脚本注释、字符串旁边的真实写入照算', () => expectWork(true, () => [
+  `python3 - <<'EOF'\n# 改一下\nprint("start")\nopen('src/a.mjs', 'w').write("x # y")\nEOF`,
+  `python3 - <<'EOF'\nopen('src/a.mjs', mode='a').write('x')\nEOF`,
+  `python3 - <<'EOF'\n"""说明"""\np = 'src/a.mjs'\nopen(p, 'wb').write(b'x')\nEOF`,
+  `node - <<'EOF'\n// 改一下\nconsole.log("start");\nrequire('fs').appendFileSync("src/a.mjs", 'x');\nEOF`,
+]));
+
+test('37.3 tee 的输入重定向不是输出文件', () => expectWork(false, () => [
+  'tee < /dev/null',
+  'tee < README.md',
+  'tee < src/a.mjs',
+  'tee <src/a.mjs',
+  'tee -a < src/a.mjs > /dev/null',
+]));
+
+test('37.3 tee 跳过重定向后的真实输出文件照算', () => expectWork(true, () => [
+  'tee src/a.mjs < /dev/null',
+  'tee < /tmp/in src/a.mjs',
+  'tee -a src/a.mjs > /dev/null',
+  `tee src/a.mjs <<'EOF'\nx\nEOF`,
+]));
+
+test('37 会话缓存版本随 Bash 工作的口径升级', async () => {
+  const { cache } = await scanOne((repo) => [human(repo, T('01:00'), '做任务 1')]);
+  assert.equal(cache.v, 10);
+});
+
+test('37.3 有 -c / -e 或运行脚本文件时 heredoc 是数据', () => expectWork(false, () => [
+  `python3 -c 'print(1)' <<'EOF'\nopen('src/a.mjs', 'w').write('x')\nEOF`,
+  `python3 gen.py <<'EOF'\nopen('src/a.mjs', 'w').write('x')\nEOF`,
+  `python3 -m tool <<'EOF'\nopen('src/a.mjs', 'w').write('x')\nEOF`,
+  `node -e 'console.log(1)' <<'EOF'\nwriteFileSync('src/a.mjs', 'x');\nEOF`,
+  `node gen.mjs <<'EOF'\nwriteFileSync('src/a.mjs', 'x');\nEOF`,
+  `node gen.mjs -e "writeFileSync('src/a.mjs', 'x')"`,
+]));
+
+test('37.3 解释器确实从 stdin 取程序时才看 heredoc', () => expectWork(true, () => [
+  `python3 <<'EOF'\nopen('src/a.mjs', 'w').write('x')\nEOF`,
+  `python3 - <<'EOF'\nopen('src/a.mjs', 'w').write('x')\nEOF`,
+  `node <<'EOF'\nwriteFileSync('src/a.mjs', 'x');\nEOF`,
+]));
+
+test('37.3 shell 注释里的重定向、命令不算', () => expectWork(false, () => [
+  '# echo x > src/a.mjs',
+  'echo x # > src/a.mjs',
+  'echo x # ; git branch feature/x',
+  `npm test\n# sed -i '' 's/a/b/' src/a.mjs\nnpm test`,
+]));
+
+test('37.3 引号里、转义的 # 不是注释，注释前的重定向照算', () => expectWork(true, () => [
+  `echo '#' > src/a.mjs`,
+  'echo "#" > src/a.mjs',
+  'echo \\# > src/a.mjs',
+  'echo a#b > src/a.mjs',
+  'echo x > src/a.mjs # 改一下',
+]));
+
+test('37.3 把命令当文本的写法、判断不了的都不算', () => expectWork(false, () => [
+  'echo "$(echo "a > src/a.mjs")"',
+  'echo $(printf "a > src/a.mjs")',
+  'echo `printf "a > src/a.mjs"`',
+  'echo "$(date)" > src/a.mjs',
+  '(( n > 3 ))',
+  'echo $((1 > 2))',
+  'for ((i=0; i>n; i++)); do :; done',
+  '[[ $a > b ]]',
+  'echo \\> src/a.mjs',
+  `echo 'git branch feature/x'`,
+  `echo '$(git branch feature/x)'`,
+  `echo "sed -i 's/a/b/' src/a.mjs"`,
+  `cat <<'EOF'\ngit commit -m x\nsed -i 's/a/b/' src/a.mjs\ngit branch feature/x\nEOF`,
+  `cat <<EOF\n$(git branch feature/x)\nEOF`,
+  `perl -pi -e 's/a/b/' src/a.mjs`,
+]));
+
+test('37.1 带任务号的 docs 分支只算提到：不换焦点、不记工作，之后的工作算给原焦点', async () => {
+  const edit = (repo) => ai(repo, T('01:05'), [tool('Edit', { file_path: path.join(repo, 'src/a.mjs'), old_string: 'a', new_string: 'b' })]);
+  for (const command of ['git switch -c docs/task-2', 'git checkout -b docs-task-2']) {
+    const { repo, records, opts } = await makeSpace();
+    await put(path.join(records, enc(repo), 's1.jsonl'), jsonl(human(repo, T('01:00'), '继续做 collab-m0-space-run 的任务 1'),
+      ai(repo, T('01:01'), [tool('Bash', { command })]), edit(repo)));
+    const { sessions } = await scan(sigOpts(opts));
+    assert.equal(sessions[0].signals.find((x) => x.kind === 'command').docs, true, command);
+    const doc = { docId: 'collab-m0-space-run', archived: false, ...parseTasksDoc('- [ ] 1 一\n- [ ] 2 二\n', 'collab-m0-space-run') };
+    const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
+    assert.deepEqual(links.map((l) => [l.taskKey, Boolean(l.workAt)]).sort(), [['collab-m0-space-run#1', true], ['collab-m0-space-run#2', false]], command);
+  }
+});
+
+test('37.3 独立的 - 之后是程序的参数：只看 stdin 程序', () => expectWork(false, () => [
+  `python3 - -c "open('src/a.mjs', 'w')" <<'EOF'\nprint(1)\nEOF`,
+  `node - -e "writeFileSync('src/a.mjs', 'x')" <<'EOF'\nconsole.log(1);\nEOF`,
+]));
+
+test('37.3 独立的 - 之后的参数不影响 stdin 程序的写入，inline 写入照算', () => expectWork(true, () => [
+  `python3 - -c x <<'EOF'\nopen('src/a.mjs', 'w').write('x')\nEOF`,
+  `python3 - "$F" <<'EOF'\nopen('src/a.mjs', 'w').write('x')\nEOF`,
+  `node - -e x <<'EOF'\nwriteFileSync('src/a.mjs', 'x');\nEOF`,
+  `python3 -c "open('src/a.mjs', 'w').write('x')"`,
+]));
+
+test('37.1 git worktree add 没有 -b 时看检出的分支：docs 分支只算提到', () => expectWork(false, () => [
+  'git worktree add ../wt docs/x',
+  'git worktree add ../wt origin/docs/x',
+  'git worktree add -f ../wt docs-x',
+  'git worktree add -b docs/x ../wt origin/main',
+]));
+
+test('37.1 git worktree add 的新分支名优先于起点，非 docs 分支照算', () => expectWork(true, () => [
+  'git worktree add ../wt feature/x',
+  'git worktree add ../wt',
+  'git worktree add -b feature/x ../wt docs/base',
+  'git worktree add -B feature/x ../wt docs/base',
+]));
+
+test('37.1 git worktree add 的带值选项不占位置参数', async () => {
+  await expectWork(false, () => ['git worktree add --lock --reason keep ../wt docs/x']);
+  await expectWork(true, () => ['git worktree add --lock --reason keep ../wt feature/x', 'git worktree add --orphan feature/x ../wt']);
+});

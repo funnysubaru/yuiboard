@@ -82,6 +82,8 @@ test('commandTexts：提交标题（含 heredoc）、PR 标题、新建分支名
   assert.deepEqual(texts(`git -c user.name=x commit -am 'fix: 任务 4'`), ['t:fix: 任务 4']);
   assert.deepEqual(texts(`git commit -m "$MSG"`), [], '变量');
   assert.deepEqual(texts(`git commit -F msg.txt`), []);
+  assert.deepEqual(texts(`# git commit -m "注释"\ngit commit -m "fix: 真的" # git switch -c x`), ['t:fix: 真的'], 'shell 注释不是命令');
+  assert.deepEqual(texts(`git commit -m "a # b"`), ['t:a # b'], '引号里的 # 不是注释');
   assert.deepEqual(texts(`echo git commit -m "N1"; git log -m`), [], 'echo 后面、别的子命令都不算');
   assert.deepEqual(texts(`git worktree add -q -b feat/n32-x ../wt && cd ../wt`), ['b:feat/n32-x']);
   assert.deepEqual(texts(`git switch -c fix/n4; git checkout -B task-3.2; git checkout main`), ['b:fix/n4', 'b:task-3.2']);
