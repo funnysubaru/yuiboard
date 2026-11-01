@@ -8,10 +8,11 @@ import path from 'node:path';
 import { listWorktrees, parseTasksDoc } from '../docs.mjs';
 import { extractRefs, extractBranchRefs, humanRefText, sessionRefs, withoutCode, isRecordTitle } from '../refs.mjs';
 import { commandTexts } from '../guard.mjs';
+import { commandWorked, DOCS_BRANCH, isCodePath } from './bash-work.mjs';
 import { mask } from '../mask.mjs';
 import { msg } from '../msg.mjs';
 
-const CACHE_VERSION = 9; // 5：新增 command 信号；6：引用块、代码块不再产生引用；7：派活逐字段去代码；8：worked、docs 标记；9：worked 记时间
+const CACHE_VERSION = 10; // 5：新增 command 信号；6：引用块、代码块不再产生引用；7：派活逐字段去代码；8：worked、docs 标记；9：worked 记时间；10：Bash 工作
 const TITLE_MAX = 60;
 const SNIPPET_MAX = 60; // 信号片段
 const SUMMARY_MAX = 120; // 最后一条消息摘要（design §3.7.4）
@@ -74,9 +75,11 @@ export async function scan({ dir, includeRoots, includeExact, knownDocIds = [], 
     return { sessions: [], cache, diagnostics: { ...diag, available: false, error: e.code === 'ENOENT' ? msg`会话目录不存在：${dir}` : msg`会话目录读不了：${e.message}` } };
   }
 
+  const roots = includeRoots.map(norm);
   const scopeInfo = {
-    roots: includeRoots.map(norm),
+    roots,
     exact: new Set(includeExact.map(norm)),
+    inProject: (file) => roots.some((r) => norm(file).startsWith(`${r}/`)),
     rootCodes: includeRoots.flatMap(encodeVariants),
     exactCodes: new Set(includeExact.flatMap(encodeVariants)),
     refOpts: { knownDocIds, knownCodes },
@@ -170,7 +173,7 @@ async function scanSession(projDir, dirName, id, prev, scopeInfo, diag) {
 // firstPrompt / lastMsg 存的是遮蔽并截断后的片段，不是原文。
 function fresh(id) {
   return { id, files: {}, cwds: [], firstCwd: null, firstAt: null, lastAt: null, customTitle: null, agentName: null, fileTitle: null,
-    owned: false, signals: [], branches: [], firstPrompt: null, lastMsg: null, aiOnlyMentions: 0 };
+    owned: false, cwd: null, signals: [], branches: [], firstPrompt: null, lastMsg: null, aiOnlyMentions: 0 };
 }
 
 // 从缓存恢复可继续累加的状态。未归属会话的缓存只有偏移：标 partial，firstCwd 用占位（首个 cwd 已看过且不等于任何 exact）。
@@ -255,6 +258,7 @@ function applyLine(state, raw, pos, scopeInfo) {
   const cwd = obj ? obj.cwd : topField(line, 'cwd');
   if (typeof cwd === 'string' && cwd) {
     const c = cwd.normalize('NFC');
+    state.cwd = c; // 这条记录当时的工作目录：Bash 命令里的相对路径按它算
     if (isMain && state.firstCwd === null) state.firstCwd = c;
     if (!state.cwds.includes(c)) state.cwds.push(c);
   }
@@ -295,7 +299,7 @@ const COMMAND_TAG = /<\/?command-[a-z]+>/g;
 // AI 文字只取开头这么多字做摘要：先遮蔽再截断，余量保证跨截断点的令牌也整段被遮。
 const AI_TEXT_PEEK = 2000;
 
-function extractSignals(state, obj, pos, isMain, { refOpts, anchors, repo }) {
+function extractSignals(state, obj, pos, isMain, { refOpts, anchors, repo, inProject }) {
   if (obj.type === 'pr-link') {
     const pr = obj.prNumber;
     if (isMain && repo && typeof obj.prRepository === 'string' && obj.prRepository.toLowerCase() === repo
@@ -325,7 +329,7 @@ function extractSignals(state, obj, pos, isMain, { refOpts, anchors, repo }) {
     const flat = text.slice(0, AI_TEXT_PEEK).replace(/\s+/g, ' ').trim();
     if (flat) noteLastMsg(state, pos.at, mask(flat));
   }
-  for (const b of blocks) if (b?.type === 'tool_use' && b.input && typeof b.input === 'object') toolSignals(state, b, pos, refOpts, anchors);
+  for (const b of blocks) if (b?.type === 'tool_use' && b.input && typeof b.input === 'object') toolSignals(state, b, pos, refOpts, anchors, inProject);
 }
 
 // 人发的消息：非 isMeta、非压缩摘要、origin 缺省或 human（排除任务通知、子 agent 回报）；字符串或 text 块。
@@ -339,7 +343,7 @@ function humanText(obj) {
   return text.replace(INJECTED, ' ').replace(COMMAND_TAG, ' ');
 }
 
-function toolSignals(state, { id, name, input }, pos, refOpts, anchors) {
+function toolSignals(state, { id, name, input }, pos, refOpts, anchors, inProject) {
   if (name === 'Agent' || name === 'Task') {
     const fields = [input.description, input.prompt].filter((x) => typeof x === 'string');
     const flat = fields.join(' ').replace(/\s+/g, ' ').trim();
@@ -357,12 +361,12 @@ function toolSignals(state, { id, name, input }, pos, refOpts, anchors) {
   if (typeof target !== 'string') return;
   // AI（含子 agent）提交、起 PR、建分支时写下的任务号是它实际在做什么的直接证据；AI 回复里的文字照旧不算
   if (name === 'Bash') {
-    for (const { text, branch, pr } of commandTexts(target)) {
+    for (const { text, branch } of commandTexts(target)) {
       const refs = branch ? extractBranchRefs(text, refOpts) : extractRefs(text, refOpts);
-      const docs = isRecordTitle(text);
+      const docs = branch ? DOCS_BRANCH.test(text) : isRecordTitle(text);
       if (refs.keys.length || refs.nums.length || refs.codes.length) addSignal(state, { kind: 'command', ...pos, refs, snippet: clip(mask(text), SNIPPET_MAX), ...(docs && { docs }) });
-      if (!branch && !pr && !docs) markWorked(state, pos.at, pos.lane);
     }
+    if (commandWorked(target, state.cwd, inProject)) markWorked(state, pos.at, pos.lane);
   }
   const t = target.replace(/\\/g, '/').normalize('NFC');
   if (name !== 'Bash' && isCodePath(t, state.cwds)) markWorked(state, pos.at, pos.lane);
@@ -452,10 +456,6 @@ export function markWorked(state, at, lane = null) {
     return;
   }
 }
-
-// 算「改代码」的文件：在会话工作目录里、不是 Markdown（规划文档、备忘、草稿都是 Markdown，临时脚本在工作目录外）。
-// ponytail: 只看 Edit / Write 和提交，改动全靠 sed 或脚本、又没提交的会话认不出；要更全得解析 Bash。
-export const isCodePath = (file, cwds) => !/\.(?:md|mdx|markdown)$/i.test(file) && (!file.startsWith('/') || cwds.some((c) => file.startsWith(`${c}/`)));
 
 // 截到 n 个字符（按码点，不切坏代理对）。
 function clip(s, n) {

@@ -599,3 +599,27 @@ test('36.7 fork + 派活读取到引擎：Codex 没有 lane，共享派活的任
   const { links } = linkSessions([doc], sessions, [], new Map(), { id: 'demo' });
   assert.deepEqual(links.filter((l) => l.workAt).map((l) => [l.sessionId, l.taskKey]).sort(), [[`codex:${uid(1)}`, 'demo#2'], [`codex:${uid(2)}`, 'demo#1']]);
 });
+
+test('37 Codex：建分支、读不出标题的提交、Bash 写文件标在当前信号上；cwd 取命令自己的工作目录', async () => {
+  const { repo, records, opts } = await makeSpace();
+  const exec = (ts, ord, cmd, cwd) => JSON.stringify({ timestamp: ts, ordinal: ord, type: 'event_msg',
+    payload: { type: 'item_completed', item: { type: 'CommandExecution', id: 'x', command: ['/bin/zsh', '-lc', cmd], ...(cwd && { cwd: `file://${cwd}` }), aggregated_output: '（虚构）' } } });
+  const T = (m) => `2026-09-20T01:${String(m).padStart(2, '0')}:00.000Z`;
+  const cases = [
+    ['git worktree add ../wt -b feature/x'], ['git switch -c feature/x'], ['git branch feature/x'],
+    ['git commit -F msg.txt'], ["sed -i '' 's/a/b/' src/a.mjs"], ['echo x > src/a.mjs'], ['echo x > src/a.mjs', repo],
+    ["python3 - <<'EOF'\nopen('src/a.mjs', 'w').write('x')\nEOF"],
+    ['git branch -a'], ['git commit -m "docs: 回写"'], ['echo x > /tmp/a.mjs'], ['echo x > NEXT.md'], ['echo x > a.mjs', '/tmp/devboard-fake-scratch'],
+  ];
+  await put(records, '2026/09/20', uid(1), jsonl(meta(uid(1), repo, T(0)),
+    ...cases.flatMap(([cmd, cwd], i) => [userItem(T(i * 2 + 1), i * 2 + 1, `做任务 ${i + 1}`), exec(T(i * 2 + 2), i * 2 + 2, cmd, cwd)])));
+  const r = await scan({ ...opts, docs: [] });
+  assert.deepEqual(r.sessions[0].signals.filter((x) => x.kind === 'prompt').map((x) => Boolean(x.worked)),
+    cases.map((_, i) => i < 8));
+});
+
+test('37 Codex 缓存版本随 Bash 工作的口径升级', async () => {
+  const { records, opts } = await makeSpace();
+  const r = await scan({ ...opts, dir: records, docs: [] });
+  assert.equal(r.cache.v, 6);
+});

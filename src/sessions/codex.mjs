@@ -5,13 +5,14 @@
 import { readdir, stat, open } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveScanScope as workspaceScope, isCodePath, markWorked } from './claude-code.mjs';
-import { commandTexts } from '../guard.mjs';
-import { extractRefs, humanRefText, isRecordTitle, sessionRefs, withoutCode } from '../refs.mjs';
+import { fileURLToPath } from 'node:url';
+import { resolveScanScope as workspaceScope, markWorked } from './claude-code.mjs';
+import { commandWorked, isCodePath } from './bash-work.mjs';
+import { extractRefs, humanRefText, sessionRefs, withoutCode } from '../refs.mjs';
 import { mask } from '../mask.mjs';
 import { msg } from '../msg.mjs';
 
-const CACHE_VERSION = 5; // 2：引用块、代码块不再产生引用；3：派活逐字段去代码；4：worked 标记；5：worked 记时间
+const CACHE_VERSION = 6; // 2：引用块、代码块不再产生引用；3：派活逐字段去代码；4：worked 标记；5：worked 记时间；6：Bash 工作
 // 单行上限：本机实测最大约 16.24 MB，4 / 8 MiB 会跳过真实记录（requirements「本机只读观察」）。
 const LINE_MAX = 20 * 1024 * 1024;
 const TITLE_MAX = 60;
@@ -55,6 +56,7 @@ export async function scan({ dir, includeRoots, includeExact, knownDocIds = [], 
   const cache = { v: CACHE_VERSION, scope, files: {}, groups: {} };
   const diag = { dir, available: true, error: null, sessions: 0, unreadableFiles: [], brokenLines: [], messages: [] };
   const ctx = { roots: includeRoots.map(norm), exact: new Set(includeExact.map(norm)), lineMax, refOpts: { knownDocIds, knownCodes } };
+  ctx.inProject = (file) => ctx.roots.some((r) => norm(file).startsWith(`${r}/`));
 
   let rels;
   try {
@@ -289,8 +291,8 @@ function applyLine(state, raw, pos, ctx, events) {
   const human = pos.isRoot && type === 'event_msg' && line.includes('"type":"UserMessage"');
   const reply = pos.isRoot && type === 'response_item' && line.includes('"role":"assistant"');
   const dispatch = type === 'response_item' && DISPATCH_TOOLS.some((n) => line.includes(`"name":"${n}"`));
-  // 改文件、非 docs 提交只标在当前信号上（同 claude-code），不新增信号，会话关联不变
-  const work = type === 'event_msg' && (line.includes('"type":"FileChange"') || (line.includes('"type":"CommandExecution"') && line.includes('commit')));
+  // 改文件、Bash 里的工作只标在当前信号上（同 claude-code），不新增信号，会话关联不变
+  const work = type === 'event_msg' && (line.includes('"type":"FileChange"') || line.includes('"type":"CommandExecution"'));
   if (!at) return true;
   let signal = null;
   let adds = false; // 会不会新增 prompt / dispatch 信号（readGroup 据此判断要不要整组重放）
@@ -317,8 +319,8 @@ function applyLine(state, raw, pos, ctx, events) {
     } else if (work && p.type === 'item_completed') {
       const files = p.item?.type === 'FileChange' ? Object.keys(p.item.changes ?? {}).map((f) => f.normalize('NFC')) : [];
       const cmd = p.item?.type === 'CommandExecution' && [p.item.command].flat().at(-1);
-      const commit = typeof cmd === 'string' && commandTexts(cmd).some((c) => !c.branch && !c.pr && !isRecordTitle(c.text));
-      signal = () => { if (commit || files.some((f) => isCodePath(f, state.cwds))) markWorked(state, at); };
+      const cwd = localPath(p.item?.cwd);
+      signal = () => { if ((typeof cmd === 'string' && commandWorked(cmd, cwd ?? state.cwds.at(-1) ?? null, ctx.inProject)) || files.some((f) => isCodePath(f, state.cwds))) markWorked(state, at); };
     }
   }
   events.push({ t: Date.parse(at), at, signal, adds });
@@ -467,6 +469,8 @@ const changed = (p, st) => p.size !== st.size || p.mtimeMs !== st.mtimeMs || p.i
 // 截短、换了文件（inode 变）或同大小但 mtime 变：已读内容不再可信，从头读。
 const rewritten = (p, st) => p.ino !== st.ino || st.size < p.size || (st.size === p.size && p.mtimeMs !== st.mtimeMs);
 const str = (v) => (typeof v === 'string' && v ? v : null);
+// 命令记录的 cwd 是 file:// 地址
+const localPath = (v) => (typeof v === 'string' && v.startsWith('file://') ? fileURLToPath(v) : null);
 
 function parse(line) {
   try {
