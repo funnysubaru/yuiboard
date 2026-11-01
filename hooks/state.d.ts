@@ -20,6 +20,8 @@ declare module 'claude-code' {
       focusKey: string | null
       /** 已为哪个会话 id 自动打开过面板：本会话第一次认出项目时开一次，重载不重复、用户关了不再弹（owner 已定 3） */
       autoOpened: string | null
+      /** 写过当前任务声明的会话 id；与当前会话不同就算还没声明 */
+      declaredIn: string | null
       /** 摘要换了内容就加一，触发面板重画 */
       rev: number
     }

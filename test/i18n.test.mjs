@@ -85,7 +85,7 @@ test('i18n：mod 面板（paneOf）在日 / 英界面里不残留中文（N25 �
   const pr = (number, title, state) => ({ number, title, body: '', url: '', state, isDraft: false, baseRefName: 'main', headRefName: `b${number}`, labels: [],
     createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-20T00:00:00Z', readyAt: null, mergedAt: state === 'MERGED' ? '2026-09-21T00:00:00Z' : null, closedAt: null,
     mergeCommit: state === 'MERGED' ? { oid: 'f'.repeat(40) } : null });
-  const signal = { kind: 'prompt', at: '2026-09-25T23:50:00.000Z', until: '2026-09-25T23:59:00.000Z', file: 'r/s.jsonl', line: 1, snippet: 'plan task 1',
+  const signal = { kind: 'prompt', at: '2026-09-25T23:50:00.000Z', until: '2026-09-25T23:59:00.000Z', worked: '2026-09-25T23:55:00.000Z', file: 'r/s.jsonl', line: 1, snippet: 'plan task 1',
     refs: extractRefs('plan task 1', { knownDocIds: ['plan'], knownCodes: [] }) };
   const sessions = [{ source: 'claude-code', id: 's1', files: ['r/s.jsonl'], cwds: ['/ws/repo'], branches: [], title: 'Session one', firstAt: signal.at, lastAt: signal.until,
     lastSummary: 'x', signals: [signal], aiOnlyMentions: 0, brokenLines: 0 }];

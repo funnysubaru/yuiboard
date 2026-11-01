@@ -73,7 +73,7 @@ const SPEC = {
   deps: ['on', 'unmet', 'external'],
   conflict: ['type', 'taskKey', 'pr', 'sessionId', 'docId', 'detail', 'source'],
   pr: ['number', 'title', 'branchLine', 'tasks', 'state', 'isDraft', 'url', 'createdAt', 'readyAt', 'mergedAt', 'localSync'],
-  session: ['id', 'source', 'title'],
+  session: ['id', 'source', 'title', 'declared'],
 };
 const NESTED = { docs: ['doc', { tasks: 'docTask' }], tasks: ['view', { prs: 'prLink', sessions: 'sessionLink', deps: 'deps' }],
   conflicts: ['conflict'], prs: ['pr'], sessions: ['session'] };

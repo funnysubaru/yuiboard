@@ -293,6 +293,29 @@ export function sessionRefs(clean, full, opts) {
   return { ...refs, docIds: [...new Set([...refs.docIds, ...extractRefs(full, opts).docIds])] };
 }
 
+// AI 声明当前任务：顶格独占一行的 `[yuiboard] task <文档名>#<编号>`，AI 回复里只放开这一行固定格式。
+// 代码块和引用块是材料，不算；普通文字里的任务号继续不算。
+const DECLARE = /^\[yuiboard\] task[ \t]+(\S.*?)\s*$/;
+const DECLARE_KEY = /^[^#\s]+#[\w.–-]+$/;
+
+/**
+ * 一段 AI 回复里的声明行，按出现顺序。
+ * @param {string} text
+ * @returns {{ text: string, keys: string[], bad: string[], none?: true }[]} keys 是任务键原样，bad 是写法不对的部分
+ */
+export function declarations(text) {
+  if (!text.includes('[yuiboard] task')) return [];
+  const out = [];
+  for (const line of withoutCodeBlocks(text).split('\n')) {
+    const m = DECLARE.exec(line);
+    if (!m) continue;
+    const words = m[1].split(/[\s,，、]+/).filter(Boolean);
+    if (words.length === 1 && words[0] === 'none') out.push({ text: line.trimEnd(), keys: [], bad: [], none: true });
+    else out.push({ text: line.trimEnd(), keys: words.filter((w) => DECLARE_KEY.test(w)), bad: words.filter((w) => !DECLARE_KEY.test(w)) });
+  }
+  return out;
+}
+
 // docs 类 PR 只作记录：`docs:`、`docs(...)`、`chore(version)`，可带 `[V2]` 这类前缀；`docs+fix(...)` 混了改动，不算
 const RECORD = /^\s*(?:\[[^\]]*\]\s*)?(?:docs(?:\([^)]*\))?|chore\(version\))!?\s*[:：]/i;
 export const isRecordTitle = (title) => RECORD.test(title ?? '');

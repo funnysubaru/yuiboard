@@ -19,10 +19,10 @@ const CONFLICT = ['type', 'taskKey', 'pr', 'sessionId', 'docId', 'detail', 'sour
 // state 起各字段给面板 PR 视图：分组同 web/app.mjs 的 prKind（draft / ready / 已合并待同步 / 已合并），
 // 等了多久按 engine waitingList 的起点（draft 看 createdAt，ready 看 readyAt，已合并看 mergedAt）
 const PR = ['number', 'title', 'branchLine', 'tasks', 'state', 'isDraft', 'url', 'createdAt', 'readyAt', 'mergedAt', 'localSync'];
-const SESSION = ['id', 'source', 'title'];
+const SESSION = ['id', 'source', 'title', 'declared']; // declared：主线最新的声明，mod 选主任务用
 // 会话关联里只有人发消息 / 派活点名、改任务行、AI 命令里写了任务号是点到具体任务的；只靠分支、PR 登记连上的不算
 // （mod 选主任务用，owner 2026-10-12 定）
-const NAMED = new Set(['prompt', 'dispatch', 'edit', 'command']);
+const NAMED = new Set(['prompt', 'dispatch', 'edit', 'command', 'declare']);
 const sessionLink = (l) => ({ ...pick(l, SESSION_LINK), ...(l.evidence?.some((e) => NAMED.has(e.kind)) && { named: true }) });
 
 // 只拷原对象实有的键：缺的字段在摘要里也缺，不凭空补 undefined / null

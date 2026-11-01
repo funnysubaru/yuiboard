@@ -6,13 +6,13 @@ import { readdir, stat, open } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveScanScope as workspaceScope, markWorked } from './claude-code.mjs';
+import { resolveScanScope as workspaceScope, markWorked, noteDeclarations } from './claude-code.mjs';
 import { commandWorked, isCodePath } from './bash-work.mjs';
-import { extractRefs, humanRefText, sessionRefs, withoutCode } from '../refs.mjs';
+import { declarations, extractRefs, humanRefText, sessionRefs, withoutCode } from '../refs.mjs';
 import { mask } from '../mask.mjs';
 import { msg } from '../msg.mjs';
 
-const CACHE_VERSION = 6; // 2：引用块、代码块不再产生引用；3：派活逐字段去代码；4：worked 标记；5：worked 记时间；6：Bash 工作
+const CACHE_VERSION = 7; // 2：引用块、代码块不再产生引用；3：派活逐字段去代码；4：worked 标记；5：worked 记时间；6：Bash 工作；7：declare 信号
 // 单行上限：本机实测最大约 16.24 MB，4 / 8 MiB 会跳过真实记录（requirements「本机只读观察」）。
 const LINE_MAX = 20 * 1024 * 1024;
 const TITLE_MAX = 60;
@@ -295,7 +295,7 @@ function applyLine(state, raw, pos, ctx, events) {
   const work = type === 'event_msg' && (line.includes('"type":"FileChange"') || line.includes('"type":"CommandExecution"'));
   if (!at) return true;
   let signal = null;
-  let adds = false; // 会不会新增 prompt / dispatch 信号（readGroup 据此判断要不要整组重放）
+  let adds = false; // 会不会新增 prompt / dispatch / declare 信号（readGroup 据此判断要不要整组重放）
   if (human || reply || dispatch || work) {
     obj ??= parse(line);
     if (!obj) return false;
@@ -309,6 +309,7 @@ function applyLine(state, raw, pos, ctx, events) {
       signal = () => noteHuman(state, flat, refs, sp);
     } else if (reply && p.type === 'message' && p.role === 'assistant' && Array.isArray(p.content)) {
       const { content } = p;
+      adds = declarations(replyText(content)).length > 0;
       signal = () => noteReply(state, content, sp, ctx.refOpts);
     } else if (dispatch && p.type === 'function_call' && DISPATCH_TOOLS.includes(p.name)) {
       const fields = dispatchFields(p.arguments);
@@ -353,10 +354,13 @@ function noteHuman(state, flat, refs, pos) {
   if (hasRefs(refs)) addSignal(state, { kind: 'prompt', ...pos, refs, snippet: around(masked, refs, SNIPPET_MAX) });
 }
 
-// AI 回复里的任务号不产生信号（owner 已定：顺带提到不算），只计数供诊断页展示。
+const replyText = (content) => content.filter((b) => b?.type === 'output_text' && typeof b.text === 'string').map((b) => b.text).join('\n');
+
+// AI 回复里的任务号不产生信号（owner 已定：顺带提到不算），只计数供诊断页展示；声明行除外。
 function noteReply(state, content, pos, refOpts) {
-  const text = content.filter((b) => b?.type === 'output_text' && typeof b.text === 'string').map((b) => b.text).join('\n');
+  const text = replyText(content);
   if (!text) return;
+  noteDeclarations(state, text, pos); // Codex 还没有注入和插件，写了照样读
   const r = extractRefs(text, refOpts);
   if (r.keys.length || r.nums.length || r.codes.length) state.aiOnlyMentions++;
   const flat = text.slice(0, AI_TEXT_PEEK).replace(/\s+/g, ' ').trim();

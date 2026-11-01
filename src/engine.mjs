@@ -115,11 +115,12 @@ export function computeBoard(docs, prs, sessions, manual, sync, config, now, def
       return { ...p, ...linked.prs.get(p.number), localSync: s?.state ?? null, localSyncReason: s?.reason ?? null };
     }),
     // 只含已关联会话的元数据；信号里有片段与位置，页面用 TaskView.sessions[].evidence 即可
-    sessions: sessions.filter((s) => sess.linkedIds.has(s.id)).map(({ signals, ...s }) => s),
+    sessions: sessions.filter((s) => sess.linkedIds.has(s.id)).map(({ signals, ...s }) => ({ ...s, ...(sess.declared.has(s.id) && { declared: sess.declared.get(s.id) }) })),
     conflicts,
     // 需求 14.4 / design §3.8.3：识别不出任务的会话、仅在 AI 回复里提到任务号的次数，只在诊断页计数
     diagnostics: { sessions: { total: sessions.length, linked: sess.linkedIds.size, unlinked: sessions.length - sess.linkedIds.size,
       aiOnlyMentions: sessions.reduce((n, s) => n + (s.aiOnlyMentions ?? 0), 0) },
+      declarations: declarationRate(sessions, sess, new Date(now).getTime()),
       convention: conventionIssues(docs, conflicts) }, // 任务 6.5
     stats: summarize(docs, views),
     gantt: summarizeGantt(docs, views),
@@ -670,7 +671,8 @@ const MINUTE = 6e4;
 const DAY = 864e5;
 const hasTaskRefs = (r) => r.keys.length + r.nums.length > 0;
 const docOf = (key) => key.slice(0, key.lastIndexOf('#'));
-const SIGNAL_TEXT = { prompt: msg('人发消息'), dispatch: msg('子 agent 派活'), command: msg('AI 执行的命令') };
+const DECLARATION_DAYS = 7;
+const SIGNAL_TEXT = { prompt: msg('人发消息'), dispatch: msg('子 agent 派活'), command: msg('AI 执行的命令'), declare: msg('AI 声明') };
 
 /**
  * 会话 ↔ 任务（design §3.8.3）。对每个会话按信号时间顺序走一遍：
@@ -709,6 +711,9 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
   const links = [];
   const conflicts = [];
   const linkedIds = new Set();
+  const declared = new Map(); // 会话 → 主线最新采用的声明（面板主任务用）
+  const declaredIds = new Set(); // 任一路有采用的声明（声明率用）
+  const workedIds = new Set(); // 有归它的工作证据（fork 只复制来的不算，声明率用）
   // docRef 文档（N17）与主工作区那份同路径，但会话改 / 碰的是磁盘上的文件，不是 ref 上那份：不进会话上下文、不认 edit
   const byPath = (p) => docs.filter((d) => d.path === p && !d.ref);
   const owner = new Map(); // 信号内容 → 最早带着它的会话
@@ -774,8 +779,14 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
     // 没认出任务的命令（提交信息写的是对不上的编号）不打断上一条 PR 登记 / 改任务行的活动（回放实测：登记 PR 后
     // 提交「任务 114 …」认不出，PR 的任务就停在提交那一刻，后面的活动全记到旧焦点上）
     const carry = new Map(); // lane → 上一条 pr-link / edit 点到的任务
+    // 声明优先：这一路有声明后，当前任务只看最新声明。其它信号照常留证据（任务详情看得到），
+    // 但不换焦点、不算工作、活动只记那一刻；声明之前的信号照现有规则。
+    const decl = new Map(); // lane（主线为 null）→ { tasks, at }
+    const aliases = aliasMap(cands);
     for (const g of s.signals) {
       direct = [];
+      const held = decl.has(g.lane ?? null);
+      const span = held ? g.at : g.until;
       if ((g.kind === 'prompt' || g.kind === 'dispatch' || g.kind === 'command') && hasTaskRefs(g.refs)) {
         const res = resolveRefs({ ...g.refs, codes: [] }, cands, ctxIds);
         // 主线程收紧（实测误报）：会话没有任何文档上下文、消息里只有裸编号（没写 docId / 任务键 / 里程碑代号），
@@ -799,27 +810,37 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
         const note = msg`${SIGNAL_TEXT[g.kind]}：「${g.snippet}」`;
         if (g.kind === 'command') {
           // 认出任务才换这一路的焦点；认不出不清（与人发消息不同：命令没写任务号不代表转去做别的了）
-          if (res.tasks.length && !g.docs && g.lane) laneTasks.set(g.lane, res.tasks);
-          else if (res.tasks.length && !g.docs) { focus = res.tasks; focusBy = g; }
-          for (const k of res.tasks) hit(k, g, g.until, note, !g.docs);
+          if (res.tasks.length && !g.docs && !held && g.lane) laneTasks.set(g.lane, res.tasks);
+          else if (res.tasks.length && !g.docs && !held) { focus = res.tasks; focusBy = g; }
+          for (const k of res.tasks) hit(k, g, span, note, !g.docs && !held);
         } else if (g.kind === 'dispatch' && lanes.has(g.toolUseId)) {
           laneTasks.set(g.toolUseId, res.tasks.length ? res.tasks : focus);
           for (const k of res.tasks) hit(k, g, g.at, note, true);
         } else {
-          focus = res.tasks;
-          focusBy = g;
-          for (const k of focus) hit(k, g, g.until, note, g.kind === 'dispatch');
+          // 这里改的是主线焦点：目标 lane 还没出现的嵌套派活也走到这，主线有声明时它改不了
+          if (!held && !decl.has(null)) { focus = res.tasks; focusBy = g; }
+          for (const k of res.tasks) hit(k, g, span, note, g.kind === 'dispatch' && !held);
+        }
+      } else if (g.kind === 'declare') {
+        const res = g.none ? { tasks: [], missing: [] } : resolveRefs(unalias({ keys: g.keys, nums: [], codes: [], docIds: [], scopes: [], partial: [] }, aliases), cands, ctxIds);
+        // 走 h：与人发消息引用不存在的任务同一处看。AI 写错没有守卫能当场拦（回复文字拦不了），诊断是唯一的出口
+        for (const m of [...res.missing, ...g.bad]) issue(g, msg`${name}声明了对不上的任务：${m}`);
+        if (g.none || res.tasks.length) {
+          decl.set(g.lane ?? null, { tasks: res.tasks, at: g.at });
+          if (g.lane) laneTasks.set(g.lane, res.tasks);
+          else { focus = res.tasks; focusBy = g; }
+          for (const k of res.tasks) hit(k, g, g.until, msg`${SIGNAL_TEXT.declare}：「${g.snippet}」`, true);
         }
       } else if (g.kind === 'edit') {
         for (const d of byPath(g.docPath)) {
-          for (const t of d.tasks ?? []) if (!t.duplicate && g.taskNums.includes(t.number)) hit(t.key, g, g.until, msg`改了 ${d.docId} 的任务行 ${t.number}`);
+          for (const t of d.tasks ?? []) if (!t.duplicate && g.taskNums.includes(t.number)) hit(t.key, g, span, msg`改了 ${d.docId} 的任务行 ${t.number}`);
         }
       } else if (g.kind === 'pr-link') {
-        for (const k of prInfo.get(g.pr)?.tasks ?? []) hit(k, g, g.until, msg`会话登记了 PR #${g.pr}`, true);
+        for (const k of prInfo.get(g.pr)?.tasks ?? []) hit(k, g, span, msg`会话登记了 PR #${g.pr}`, !held);
       } else if (g.kind === 'branch') {
         const list = [];
         for (const p of prs.filter((x) => x.headRefName === g.branch)) {
-          for (const k of prInfo.get(p.number)?.tasks ?? []) { hit(k, g, g.until, msg`会话分支 ${g.branch} = PR #${p.number} 的 head`, true); list.push(k); }
+          for (const k of prInfo.get(p.number)?.tasks ?? []) { hit(k, g, span, msg`会话分支 ${g.branch} = PR #${p.number} 的 head`, !held); list.push(k); }
         }
         branchTasks.set(g.lane ?? null, list);
         // N29（owner 2026-10-13）：主线切到能对上 PR 任务的分支 = 转去做这个 PR 了，此前由消息设定的焦点不再续活动
@@ -827,22 +848,37 @@ export function linkSessions(docs, sessions, prs, prInfo, config) {
         // 只管主线（owner 2026-10-15 改）：子 agent 开工时检出常刚好切到一条 PR 不对应派活的分支，回放里会把派给它的任务提前停掉。
         // 只清此前记录设的焦点：扫描器在同一条用户记录里先出 prompt、再出 gitBranch，那条消息刚点名的任务要保留（PR #51 review）。
         const sameRecord = focusBy && focusBy.file === g.file && focusBy.line === g.line;
-        if (list.length && !g.lane && !sameRecord) focus = [];
+        if (list.length && !g.lane && !sameRecord && !held) focus = [];
       }
       if (g.kind === 'dispatch' && lanes.has(g.toolUseId) && !laneTasks.has(g.toolUseId)) laneTasks.set(g.toolUseId, focus);
       const own = g.lane ? laneTasks.get(g.lane) ?? focus : focus;
-      const active = [...own, ...(branchTasks.get(g.lane ?? null) ?? [])];
+      const active = [...own, ...(decl.has(g.lane ?? null) ? [] : branchTasks.get(g.lane ?? null) ?? [])];
       for (const k of active) hit(k, g, g.until, null);
       workedOn(active, g);
       const lane = g.lane ?? null;
       if (g.kind === 'pr-link' || g.kind === 'edit') carry.set(lane, direct);
-      else if (g.kind === 'command' && !direct.length) for (const k of carry.get(lane) ?? []) hit(k, g, g.until, null);
+      else if (g.kind === 'command' && !direct.length && !held) for (const k of carry.get(lane) ?? []) hit(k, g, g.until, null);
       else carry.delete(lane);
     }
     if (per.size) linkedIds.add(s.id);
+    if (decl.size) declaredIds.add(s.id);
+    if (s.signals.some((g) => workOwn.has(`${s.id}\n${signalId(g)}`))) workedIds.add(s.id);
+    if (decl.has(null)) declared.set(s.id, decl.get(null));
     links.push(...per.values());
   }
-  return { links, conflicts, linkedIds };
+  return { links, conflicts, linkedIds, declared, declaredIds, workedIds };
+}
+
+/**
+ * 声明率（试点用）：最近 7 天有活动、干了实际工作的 Claude Code 会话里，有采用的声明的有多少（none 也算）。
+ * 实际工作 = 有 workAt 的关联，或有归它的 worked（做的不是规划任务时没有关联；fork 复制来的不算）。Codex 还没有注入，不算。
+ * ponytail: 窗口写死 7 天，试点结束后不需要再调。从没出过信号的会话看不出干没干活，不算开工。
+ */
+function declarationRate(sessions, { links, declaredIds, workedIds }, nowMs) {
+  const worked = new Set(links.filter((l) => l.workAt).map((l) => l.sessionId));
+  const started = sessions.filter((s) => s.source === 'claude-code' && nowMs - Date.parse(s.lastAt) <= DECLARATION_DAYS * DAY
+    && (worked.has(s.id) || workedIds.has(s.id)));
+  return { days: DECLARATION_DAYS, started: started.length, declared: started.filter((s) => declaredIds.has(s.id)).length };
 }
 
 // 信号的内容（不含它在哪个文件哪一行：fork 出来的记录换了文件）
