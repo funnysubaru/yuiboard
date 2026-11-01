@@ -971,4 +971,3 @@ test('37.1 git worktree add 的带值选项不占位置参数', async () => {
   await expectWork(false, () => ['git worktree add --lock --reason keep ../wt docs/x']);
   await expectWork(true, () => ['git worktree add --lock --reason keep ../wt feature/x', 'git worktree add --orphan feature/x ../wt']);
 });
-
